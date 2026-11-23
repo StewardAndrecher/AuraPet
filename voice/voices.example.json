@@ -1,0 +1,12 @@
+{
+  "zh": {
+    "ref_audio": "samples/chinese.wav",
+    "ref_text": "把这行替换成中文参考音频的实际台词",
+    "language": "Chinese"
+  },
+  "ja": {
+    "ref_audio": "samples/japanese.wav",
+    "ref_text": "この行を日本語の参照音声の書き起こしに置き換えます",
+    "language": "Japanese"
+  }
+}
