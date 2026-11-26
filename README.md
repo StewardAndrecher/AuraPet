@@ -5,7 +5,7 @@
 <p align="center">
   <img src="docs/demo/kaltsit-demo.gif" alt="AuraPet 凯尔希思衡托导入与运行演示" width="220" />
 </p>
-<p align="center"><sub>演示素材「凯尔希思衡托」已获原作者授权，仅用于 GitHub 演示与独立可选角色包分发，不包含在 AuraPet 软件本体内。</sub></p>
+<p align="center"><sub>演示素材「凯尔希思衡托」已获原作者授权，作者哔哩哔哩名：星天雷_Star，视频链接：https://b23.tv/WZEZOLH。仅用于 GitHub 演示与独立可选角色包分发，不包含在 AuraPet 软件本体内。</sub></p>
 
 ## 文档导航
 
