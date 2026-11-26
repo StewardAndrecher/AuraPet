@@ -24,8 +24,14 @@ public:
     void setPrimaryOnly(bool enabled);
     void moveToDisplay(const QScreen* display);
     int scalePercent() const;
+    const QPixmap& previewPixmap() const { return firstFrame_; }
     void setClickThrough(bool enabled);
+    bool alwaysOnTop() const { return alwaysOnTop_; }
+    void setAlwaysOnTop(bool enabled);
+    bool isDragging() const { return dragMoved_; }
     void setAimLean(qreal degrees);
+    void setTransitPose(qreal leanDegrees, qreal scaleX, qreal scaleY);
+    void resetTransitPose();
     void playBounce();
     void playAction(PetAsset asset, int stillDurationMs);
     void returnToIdle();
@@ -33,6 +39,7 @@ public:
     std::function<void()> layoutChanged;
     std::function<void()> clickRequested;
     std::function<void()> doubleClickRequested;
+    std::function<void(bool)> dragStateChanged;
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -53,6 +60,9 @@ private:
     void clearAction();
 
     QPixmap firstFrame_;
+    QPixmap cachedIdleScaled_;
+    QSize cachedIdlePixelSize_;
+    int cachedIdleFrameNumber_ = -2;
     std::unique_ptr<QMovie> movie_;
     QPixmap actionFrame_;
     std::unique_ptr<QMovie> actionMovie_;
@@ -63,10 +73,14 @@ private:
     QSize baseSize_;
     int scalePercent_ = 100;
     bool primaryOnly_ = false;
+    bool alwaysOnTop_ = true;
     bool movieStarted_ = false;
     bool dragMoved_ = false;
     bool suppressClickRelease_ = false;
     qreal aimLean_ = 0;
+    qreal transitLean_ = 0;
+    qreal transitScaleX_ = 1.0;
+    qreal transitScaleY_ = 1.0;
     double bounceProgress_ = 1;
     QPoint dragOffset_;
 };

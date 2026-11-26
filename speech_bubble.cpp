@@ -1,20 +1,12 @@
 #include "speech_bubble.h"
 
-#include <QDialog>
-#include <QDialogButtonBox>
 #include <QFontMetricsF>
-#include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPlainTextEdit>
-#include <QPushButton>
-#include <QScrollBar>
-#include <QScreen>
-#include <QTextCursor>
 #include <QTextLayout>
-#include <QVBoxLayout>
 #include <QtMath>
 
+#include <algorithm>
 #include <array>
 #include <vector>
 
@@ -23,7 +15,6 @@ constexpr auto floating = Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOn
 constexpr int horizontalInset = 31;
 constexpr int topInset = 22;
 constexpr int bottomInset = 22;
-constexpr int buttonGap = 6;
 constexpr int minWidth = 142;
 constexpr int gap = 8;
 
@@ -34,70 +25,23 @@ QPoint positionIn(const QRect& area, QSize size, QPoint preferred)
 }
 }
 
-class ReplyReader : public QDialog {
-public:
-    ReplyReader()
-        : status_(new QLabel(this)), text_(new QPlainTextEdit(this))
-    {
-        setObjectName(QStringLiteral("petReplyReader"));
-        setWindowTitle(QStringLiteral("本条回复"));
-        setWindowModality(Qt::NonModal);
-        resize(535, 368);
-        auto* layout = new QVBoxLayout(this);
-        status_->setObjectName(QStringLiteral("petReplyStatus"));
-        status_->hide();
-        layout->addWidget(status_);
-        text_->setObjectName(QStringLiteral("petReplyText"));
-        text_->setAccessibleName(QStringLiteral("回复全文"));
-        text_->setReadOnly(true);
-        text_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-        text_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        layout->addWidget(text_);
-        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
-        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::close);
-        layout->addWidget(buttons);
-    }
-
-    void setReply(const QString& text, bool generating, bool startOver = false)
-    {
-        const QString visible = startOver ? QString{} : displayed_;
-        if (startOver || visible != text) {
-            if (!startOver && text.startsWith(visible)) {
-                auto* scroll = text_->verticalScrollBar();
-                const int scrollPosition = scroll->value();
-                QTextCursor end(text_->document());
-                end.movePosition(QTextCursor::End);
-                end.insertText(text.mid(visible.size()));
-                scroll->setValue(scrollPosition);
-            } else {
-                text_->setPlainText(text);
-            }
-            displayed_ = text;
-        }
-        status_->setText(QStringLiteral("正在生成…"));
-        status_->setVisible(generating);
-    }
-
-    void stopFollowing()
-    {
-        status_->hide();
-    }
-
-private:
-    QLabel* status_;
-    QPlainTextEdit* text_;
-    QString displayed_;
-};
-
 struct SpeechBubble::Preview {
     std::vector<std::unique_ptr<QTextLayout>> layouts;
     std::vector<QTextLine> lines;
+    QFont font;
+    int width = 0;
     int textHeight = 0;
-    bool overflow = false;
 
-    static Preview layout(const QStringList& paragraphs, const QFont& font, int width, int maxHeight)
+    void layout(const QStringList& paragraphs, const QFont& requestedFont, int requestedWidth)
     {
-        Preview result;
+        if (requestedWidth == width && requestedFont == font) {
+            return;
+        }
+        lines.clear();
+        layouts.clear();
+        width = requestedWidth;
+        font = requestedFont;
+        textHeight = 0;
         QTextOption options;
         options.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
         for (const auto& paragraph : paragraphs) {
@@ -106,84 +50,87 @@ struct SpeechBubble::Preview {
             layout->beginLayout();
             for (auto line = layout->createLine(); line.isValid(); line = layout->createLine()) {
                 line.setLineWidth(width);
-                const int next = result.textHeight + qCeil(line.height());
-                if (next > maxHeight) {
-                    result.overflow = true;
-                    break;
-                }
-                line.setPosition(QPointF(0, result.textHeight));
-                result.textHeight = next;
-                result.lines.push_back(line);
+                line.setPosition(QPointF(0, textHeight));
+                textHeight += qCeil(line.height());
+                lines.push_back(line);
             }
             layout->endLayout();
-            result.layouts.push_back(std::move(layout));
-            if (result.overflow) {
-                break;
-            }
+            layouts.push_back(std::move(layout));
         }
-        return result;
     }
 };
 
 SpeechBubble::SpeechBubble(QWidget* pet)
     : QWidget(pet, floating | Qt::WindowDoesNotAcceptFocus | Qt::WindowTransparentForInput),
-      preview_(std::make_unique<Preview>()),
-      readButton_(std::make_unique<QPushButton>(QStringLiteral("查看本条全文"), pet))
+      preview_(std::make_unique<Preview>()), narrowPreview_(std::make_unique<Preview>())
 {
     setObjectName(QStringLiteral("petSpeechBubble"));
     setAccessibleName(QStringLiteral("桌宠发言"));
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_MacAlwaysShowToolWindow);
-    readButton_->setWindowFlags(floating | Qt::WindowDoesNotAcceptFocus);
-    readButton_->setObjectName(QStringLiteral("petReplyReadButton"));
-    readButton_->setAttribute(Qt::WA_ShowWithoutActivating);
-    readButton_->setAttribute(Qt::WA_MacAlwaysShowToolWindow);
-    readButton_->setFocusPolicy(Qt::NoFocus);
-    readButton_->setCursor(Qt::PointingHandCursor);
-    readButton_->setStyleSheet(QStringLiteral(
-        "QPushButton { background: #f4f2fa; color: #39324f; border: 1px solid #dfdaeb;"
-        "border-radius: 8px; padding: 3px 9px; }"
-        "QPushButton:hover { background: #ebe7f7; }"
-        "QPushButton:pressed { background: #e3ddf3; }"));
-    connect(readButton_.get(), &QPushButton::clicked, this, &SpeechBubble::openReader);
+    scrollAnimation_.setEasingCurve(QEasingCurve::OutCubic);
+    connect(&scrollAnimation_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
+        scrollOffset_ = value.toReal();
+        update();
+    });
 }
 
 SpeechBubble::~SpeechBubble() = default;
 
 void SpeechBubble::beginReply()
 {
-    message_.clear();
-    fullMessage_.clear();
+    setMessage({});
+    scrollAnimation_.stop();
+    scrollOffset_ = scrollTarget_ = 0;
     preferredWidth_ = preferredHeight_ = 0;
     side_ = Side::Above;
-    if (readerFollows_) {
-        reader_->stopFollowing();
-    }
-    readerFollows_ = false;
 }
 
-void SpeechBubble::setMessage(const QString& text, bool generating, const QString& fullText)
+void SpeechBubble::setMessage(const QString& text)
 {
-    if (message_ != text) {
-        message_ = text;
-        setAccessibleDescription(text);
+    if (message_ == text) {
+        return;
     }
-    updateReader(fullText.isNull() ? text : fullText, generating);
+    message_ = text;
+    setAccessibleDescription(text);
+    QString normalized = text;
+    normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    normalized.replace(u'\r', u'\n');
+    paragraphs_ = normalized.split(u'\n');
+    preview_->width = narrowPreview_->width = 0;
+    displayed_ = nullptr;
 }
 
-void SpeechBubble::updateReader(const QString& text, bool generating)
+void SpeechBubble::scrollTo(qreal offset)
 {
-    fullMessage_ = text;
-    generating_ = generating;
-    if (readerFollows_ && reader_->isVisible()) {
-        reader_->setReply(fullMessage_, generating_);
+    if (scrollTarget_ == offset) {
+        return;
     }
+    scrollAnimation_.stop();
+    scrollTarget_ = offset;
+    if (offset <= scrollOffset_) {
+        scrollOffset_ = offset;
+        return;
+    }
+    scrollAnimation_.setDuration(qBound(125, 115 + qRound((offset - scrollOffset_) / 3), 340));
+    scrollAnimation_.setStartValue(scrollOffset_);
+    scrollAnimation_.setEndValue(offset);
+    scrollAnimation_.start();
 }
 
 int SpeechBubble::visibleLines() const
 {
-    return static_cast<int>(preview_->lines.size());
+    if (!displayed_) {
+        return 0;
+    }
+    const int area = qMax(0, height() - topInset - bottomInset);
+    const auto& lines = displayed_->lines;
+    const auto first = std::partition_point(lines.cbegin(), lines.cend(),
+        [this](const QTextLine& line) { return line.y() + line.height() <= scrollTarget_; });
+    const auto last = std::partition_point(first, lines.cend(),
+        [this, area](const QTextLine& line) { return line.y() < scrollTarget_ + area; });
+    return static_cast<int>(last - first);
 }
 
 void SpeechBubble::place(const QRect& workArea, const QRect& pet, const QRect& occupied)
@@ -192,26 +139,18 @@ void SpeechBubble::place(const QRect& workArea, const QRect& pet, const QRect& o
     const QRect area = insetArea.isValid() ? insetArea : workArea;
     const int capWidth = qMax(1, qMin(420, qRound(area.width() * .45)));
     const int capHeight = qMax(1, qMin(260, qRound(area.height() * .35)));
-    const int footer = readButton_->sizeHint().height() + buttonGap;
-    QString normalized = message_;
-    normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-    normalized.replace(u'\r', u'\n');
-    const auto paragraphs = normalized.split(u'\n');
-
     const QFontMetricsF metrics(font());
     int width = qMin(capWidth, qMax(minWidth, preferredWidth_));
-    for (const auto& paragraph : paragraphs) {
+    for (const auto& paragraph : paragraphs_) {
         if (width == capWidth) {
             break;
         }
         width = qMax(width, qMin(capWidth, qCeil(metrics.horizontalAdvance(paragraph)) + 2 * horizontalInset + 2));
     }
     preferredWidth_ = width;
-    const auto layoutFor = [&](int w, int h) {
-        return Preview::layout(paragraphs, font(), qMax(1, w - 2 * horizontalInset), qMax(0, h - topInset - bottomInset));
-    };
-    auto preferred = layoutFor(width, capHeight);
-    const int naturalHeight = preferred.overflow ? capHeight : topInset + preferred.textHeight + bottomInset;
+    const auto textWidth = [](int w) { return qMax(1, w - 2 * horizontalInset); };
+    preview_->layout(paragraphs_, font(), textWidth(width));
+    const int naturalHeight = topInset + preview_->textHeight + bottomInset;
     const int height = qMin(capHeight, qMax(preferredHeight_, naturalHeight));
     preferredHeight_ = height;
 
@@ -238,15 +177,13 @@ void SpeechBubble::place(const QRect& workArea, const QRect& pet, const QRect& o
     const QRect room = choice ? choice->room : area;
     side_ = choice ? choice->side : Side::Above;
     const QSize size(qMin(width, room.width()), qMin(height, room.height()));
-    if (size.width() != width || size.height() < height) {
-        preferred = layoutFor(size.width(), size.height());
+    displayed_ = preview_.get();
+    if (size.width() != width) {
+        narrowPreview_->layout(paragraphs_, font(), textWidth(size.width()));
+        displayed_ = narrowPreview_.get();
     }
-
-    if (preferred.overflow) {
-        preferred = layoutFor(size.width(), size.height() - footer);
-        preferred.overflow = true;
-    }
-    *preview_ = std::move(preferred);
+    const int viewportHeight = qMax(0, size.height() - topInset - bottomInset);
+    scrollTo(qMax(0, displayed_->textHeight - viewportHeight));
     QPoint position(pet.center().x() - size.width() / 2, pet.center().y() - size.height() / 2);
     switch (side_) {
     case Side::Above: position.setY(room.bottom() + 1 - size.height()); break;
@@ -258,54 +195,14 @@ void SpeechBubble::place(const QRect& workArea, const QRect& pet, const QRect& o
     tailAnchor_ = pet.center() - position;
     setGeometry(QRect(position, size));
     update();
-    syncButton();
 }
 
-void SpeechBubble::syncButton()
+void SpeechBubble::placeWithTransitOffset(const QRect& workArea, const QRect& landingPetRect, const QPoint& liveOffset)
 {
-    if (!isVisible() || !preview_->overflow) {
-        readButton_->hide();
-        return;
+    place(workArea, landingPetRect, landingPetRect);
+    if (!liveOffset.isNull()) {
+        move(pos() + liveOffset);
     }
-    const QSize size = readButton_->sizeHint();
-    const QRect geometry(pos() + QPoint((width() - size.width()) / 2, height() - bottomInset - size.height()), size);
-    readButton_->setGeometry(geometry);
-    if (readButton_->isHidden()) {
-        readButton_->show();
-    }
-    readButton_->raise();
-}
-
-void SpeechBubble::openReader()
-{
-    if (!reader_) {
-        reader_ = std::make_unique<ReplyReader>();
-    }
-    reader_->setReply(fullMessage_, generating_, !readerFollows_ || !reader_->isVisible());
-    readerFollows_ = true;
-    if (!reader_->isVisible()) {
-        const auto* screen = this->screen();
-        if (screen) {
-            const QRect area = screen->availableGeometry();
-            reader_->resize(reader_->size().boundedTo(area.size()));
-            reader_->move(positionIn(area, reader_->size(), area.center() - reader_->rect().center()));
-        }
-        reader_->show();
-    }
-    reader_->raise();
-    reader_->activateWindow();
-}
-
-void SpeechBubble::showEvent(QShowEvent* event)
-{
-    QWidget::showEvent(event);
-    syncButton();
-}
-
-void SpeechBubble::hideEvent(QHideEvent* event)
-{
-    readButton_->hide();
-    QWidget::hideEvent(event);
 }
 
 void SpeechBubble::paintEvent(QPaintEvent*)
@@ -346,10 +243,21 @@ void SpeechBubble::paintEvent(QPaintEvent*)
     painter.drawEllipse(root + outward * 4.5, 4.4, 4.4);
     painter.drawEllipse(root + outward * 10, 2.2, 2.2);
 
+    if (!displayed_) {
+        return;
+    }
+    const QRect viewport = rect().adjusted(horizontalInset, topInset, -horizontalInset, -bottomInset);
+    if (viewport.isEmpty()) {
+        return;
+    }
+    painter.setClipRect(viewport);
     painter.setPen(QColor("#262631"));
-    const bool singleLine = preview_->lines.size() == 1 && !preview_->overflow;
-    for (const auto& line : preview_->lines) {
-        const qreal offset = singleLine ? qMax(0.0, (width() - 2 * horizontalInset - line.naturalTextWidth()) / 2) : 0;
-        line.draw(&painter, QPointF(horizontalInset + offset, topInset));
+    const auto& lines = displayed_->lines;
+    const bool singleLine = lines.size() == 1;
+    const auto first = std::partition_point(lines.cbegin(), lines.cend(),
+        [this](const QTextLine& line) { return line.y() + line.height() <= scrollOffset_; });
+    for (auto line = first; line != lines.cend() && line->y() < scrollOffset_ + viewport.height(); ++line) {
+        const qreal offset = singleLine ? qMax(0.0, (viewport.width() - line->naturalTextWidth()) / 2) : 0;
+        line->draw(&painter, QPointF(viewport.left() + offset, viewport.top() - scrollOffset_));
     }
 }

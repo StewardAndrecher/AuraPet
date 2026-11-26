@@ -240,14 +240,25 @@ def make_handler(engine):
     return Handler
 
 
+def default_role_database():
+    database = ROOT.parent / "roles.sqlite3"
+    if database.exists():
+        return database
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Gif-Pet" / "Gif-Pet" / "roles.sqlite3"
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "Gif-Pet" / "Gif-Pet" / "roles.sqlite3"
+    return database
+
+
 def arguments():
     parser = argparse.ArgumentParser(description="AuraPet Qwen3-TTS 0.6B 本机流式语音服务")
-    parser.add_argument("--backend", choices=("torch", "ggml", "metal"), default="torch")
-    parser.add_argument("--port", type=int, default=17860)
-    database = ROOT.parent / "roles.sqlite3"
-    if sys.platform == "darwin" and not database.exists():
-        database = Path.home() / "Library" / "Application Support" / "Gif-Pet" / "Gif-Pet" / "roles.sqlite3"
-    parser.add_argument("--role-database", type=Path, default=database)
+    default_backend = "metal" if sys.platform == "darwin" else "torch"
+    parser.add_argument("--backend", choices=("torch", "ggml", "metal"), default=default_backend)
+    parser.add_argument("--port", type=int, default=int(os.environ.get("AURAPET_VOICE_PORT", "17860")))
+    parser.add_argument("--role-database", type=Path, default=default_role_database())
     parser.add_argument("--voices", type=Path, default=ROOT / "voices.json")
     parser.add_argument("--model", type=Path, default=ROOT / "Qwen3-TTS-12Hz-0.6B-Base")
     parser.add_argument("--talker", type=Path, default=ROOT / "gguf" / "qwen-talker-0.6b-base-Q8_0.gguf")
@@ -266,7 +277,11 @@ def main():
         engine.warm_up()
     except Exception as error:
         raise SystemExit(f"语音服务无法启动 · {error}") from error
-    with ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(engine)) as server:
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(engine))
+    except OSError as error:
+        raise SystemExit(f"语音服务端口 127.0.0.1:{args.port} 已被占用或不可用 · {error}") from error
+    with server:
         print(f"语音服务就绪 http://127.0.0.1:{args.port}/v1/audio/speech", flush=True)
         try:
             server.serve_forever()

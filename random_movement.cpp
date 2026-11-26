@@ -41,6 +41,25 @@ void RandomMovement::cancelTargeting()
     postpone();
 }
 
+void RandomMovement::setSpaceTransitActive(bool active)
+{
+    if (spaceTransit_ != active) {
+        spaceTransit_ = active;
+        if (active) {
+            rules_.cancelDestination();
+        }
+        postpone();
+    }
+}
+
+void RandomMovement::finishSpaceTransit(const QPoint& landedPos, double idlePauseSeconds)
+{
+    spaceTransit_ = false;
+    rules_.cancelDestination();
+    rules_.resumeAt(landedPos, idlePauseSeconds);
+    postpone();
+}
+
 QPointF RandomMovement::landingPoint(const QPointF& requested) const
 {
     const QPointF half(window_.width() / 2.0, window_.height() / 2.0);
@@ -83,6 +102,25 @@ void RandomMovement::setKibble(Kibble kibble)
     rules_.setKibble(kibble);
 }
 
+void RandomMovement::setRhythm(EffectiveRhythm rhythm)
+{
+    rules_.setRhythm(rhythm);
+}
+
+void RandomMovement::setAnchor(const QPoint& anchor)
+{
+    rules_.setAnchor(anchor);
+}
+
+void RandomMovement::setActivity(double value)
+{
+    rules_.setActivity(value);
+    if (onActivity_) {
+        onActivity_(rules_.activity());
+    }
+    postpone();
+}
+
 void RandomMovement::setQuietMode(bool quiet)
 {
     if (quiet_ != quiet) {
@@ -113,7 +151,15 @@ void RandomMovement::postpone()
         return;
     }
     if (!directed && canRoam()) {
-        rules_.resumeAt(window_.pos());
+        const double jitter = 0.45 + QRandomGenerator::global()->generateDouble() * 0.9;
+        rules_.resumeAt(window_.pos(), jitter);
+    }
+    const bool activeMotion = directed || canRoam();
+    const int desiredInterval = activeMotion ? 16 : 200;
+    const auto desiredType = activeMotion ? Qt::PreciseTimer : Qt::CoarseTimer;
+    if (timer_.interval() != desiredInterval || timer_.timerType() != desiredType) {
+        timer_.setTimerType(desiredType);
+        timer_.setInterval(desiredInterval);
     }
     clock_.start();
     timer_.start();
@@ -121,7 +167,7 @@ void RandomMovement::postpone()
 
 bool RandomMovement::canRoam() const
 {
-    return enabled_ && !suspended_ && !quiet_ && !targeting_ && !mouseHeld_;
+    return enabled_ && !suspended_ && !quiet_ && !targeting_ && !mouseHeld_ && !spaceTransit_;
 }
 
 void RandomMovement::tick()
@@ -134,7 +180,15 @@ void RandomMovement::tick()
     if (!directed && (!roaming || QApplication::activeModalWidget() || QApplication::activePopupWidget())) {
         blocked_ = roaming;
         rules_.recoverActivity(elapsed);
+        if (timer_.interval() != 200) {
+            timer_.setTimerType(Qt::CoarseTimer);
+            timer_.setInterval(200);
+        }
     } else if (auto* screen = window_.screen()) {
+        if (timer_.interval() != 16) {
+            timer_.setTimerType(Qt::PreciseTimer);
+            timer_.setInterval(16);
+        }
         advanceMovement(elapsed, *screen, directed);
     }
     if (onActivity_ && previousActivity != rules_.activity()) {

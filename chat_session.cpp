@@ -6,15 +6,14 @@
 #include "role_package.h"
 
 #include <QJsonArray>
+#include <QHostAddress>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QRandomGenerator>
 #include <QSettings>
 #include <QTimer>
 
-#include <array>
 #include <memory>
 #include <utility>
 
@@ -26,6 +25,10 @@ QUrl chatEndpoint(const QString& base)
     const auto scheme = url.scheme();
     if (!url.isValid() || url.host().isEmpty() || (scheme != QStringLiteral("http") && scheme != QStringLiteral("https"))
         || !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment()) {
+        return {};
+    }
+    if (scheme == QStringLiteral("http") && url.host() != QStringLiteral("localhost")
+        && !QHostAddress(url.host()).isLoopback()) {
         return {};
     }
     QString path = url.path();
@@ -57,8 +60,13 @@ std::optional<ChatProvider> configuredProvider(const QSettings& settings, QStrin
         error = QStringLiteral("请在「聊天记录」→「AI 接口」填写服务地址和模型。");
         return std::nullopt;
     }
+    if (settings.value(consentEndpointSetting).toString() != provider.url.toString(QUrl::FullyEncoded)) {
+        error = QStringLiteral("请在「聊天记录」→「AI 接口」先确认向此地址发送哪些数据。");
+        return std::nullopt;
+    }
     if (settings.value(usesKeySetting).toBool()) {
-        if (!readChatKey(provider.url.toString(QUrl::FullyEncoded), provider.key, error) || provider.key.isEmpty()) {
+        const bool local = settings.value(localKeySetting, false).toBool();
+        if (!readChatKey(provider.url.toString(QUrl::FullyEncoded), local, provider.key, error) || provider.key.isEmpty()) {
             if (error.isEmpty()) {
                 error = QStringLiteral("请在「AI 接口」重新保存 API Key。");
             }
@@ -85,25 +93,44 @@ QNetworkReply* postChat(QNetworkAccessManager& network, const ChatProvider& prov
 }
 
 QJsonArray requestMessages(const QList<ChatMessage>& history, const QString& roleName, const QString& text,
-                           const QString& memories, bool voiceFirst, const QJsonObject& card)
+                           const QString& memories, bool voiceFirst, const QJsonObject& card, bool proactive)
 {
     auto object = [](const QString& role, const QString& content) {
         return QJsonObject{{QStringLiteral("role"), role}, {QStringLiteral("content"), content}};
     };
     QStringList core;
+    const auto identity = card.value(QStringLiteral("identityAndStance")).toString().trimmed();
+    const auto address = card.value(QStringLiteral("userAddress")).toString().trimmed().left(80);
+    if (!identity.isEmpty()) {
+        core.append(QStringLiteral("角色身份与立场\n") + identity);
+    }
     for (const auto& line : card.value(QStringLiteral("corePrompt")).toArray()) {
         core.append(line.toString());
     }
-    const QString base = core.isEmpty()
-        ? QStringLiteral("你是名叫「%1」的桌面伙伴。请用用户的语言简洁、自然地回复，优先用两三句短句。").arg(roleName)
-        : core.join(u'\n');
+    if (core.isEmpty()) {
+        core.append(QStringLiteral("你是名叫「%1」的桌面伙伴。请用用户的语言简洁、自然地回复，优先用两三句短句。").arg(roleName));
+    }
+    if (!address.isEmpty()) {
+        core.append(QStringLiteral("称呼用户为「%1」。").arg(address));
+    }
+    const auto base = core.join(u'\n');
     QJsonArray messages{object(QStringLiteral("system"), base)};
     if (voiceFirst) {
         const auto instruction = card.value(QStringLiteral("voice")).toObject().value(QStringLiteral("streamingPrompt"))
             .toString(QStringLiteral("这段回复会实时朗读。用一句简短完整的话直接开头，再补充必要细节。")).left(400);
         messages.append(object(QStringLiteral("system"), instruction));
     }
-    const auto context = rolePromptContext(card, text);
+    QString contextText = text;
+    if (proactive) {
+        contextText = memories;
+        for (auto it = history.crbegin(); it != history.crend(); ++it) {
+            if (it->speaker == QStringLiteral("user")) {
+                contextText = it->text;
+                break;
+            }
+        }
+    }
+    const auto context = rolePromptContext(card, contextText);
     if (!context.isEmpty()) {
         messages.append(object(QStringLiteral("system"), context.join(QStringLiteral("\n\n"))));
     }
@@ -126,14 +153,6 @@ QJsonArray requestMessages(const QList<ChatMessage>& history, const QString& rol
     }
     messages.append(object(QStringLiteral("user"), text));
     return messages;
-}
-
-QString localSpeech()
-{
-    static const std::array<QString, 4> lines{{QStringLiteral("我在这里陪你。"),
-        QStringLiteral("嗨！有想聊的，点我就好。"), QStringLiteral("记得给自己留一点休息时间。"),
-        QStringLiteral("今天也一起慢慢来吧。")}};
-    return lines.at(QRandomGenerator::global()->bounded(static_cast<int>(lines.size())));
 }
 
 struct LiveReply {
@@ -166,8 +185,6 @@ void ChatSession::setRole(const QString& roleId, bool reload)
         summaryAttempt_.invalidate();
         setSummaryStatus({});
     }
-    QString shareError;
-    roleCard_ = library_.shareFor(roleId, shareError, false).card;
     roleName_ = roleId_ == RoleLibrary::builtInId() ? RoleLibrary::builtInName() : QStringLiteral("桌宠");
     if (roleId_ != RoleLibrary::builtInId() && library_.available()) {
         QString error;
@@ -193,19 +210,15 @@ bool ChatSession::send(const QString& prompt, QString& error)
     return request(text, false, error);
 }
 
-void ChatSession::speak()
+bool ChatSession::speak()
 {
     if (!proactiveEnabled_ || busy() || roleId_.isEmpty()) {
-        return;
+        return false;
     }
     QString error;
-    if (!request(QStringLiteral("请主动对用户说一句简短、自然的话。不要假定用户刚刚说过什么。只输出一句话。"),
-                 true, error)) {
-        proactiveReply_ = true;
-        emit replyStarted();
-        proactiveReply_ = false;
-        finishReply({}, localSpeech(), {}, true);
-    }
+    return request(QStringLiteral("你正在桌面主动发言。参考角色设定、最近的对话和记忆，挑一个适合自然延续的话题。"
+        "上下文不足时，给出一句符合角色的简短陪伴台词。不要假定用户刚发了消息，也别复述敏感细节。"
+        "仅输出一句角色会说的话。"), true, error);
 }
 
 void ChatSession::setProactiveEnabled(bool enabled)
@@ -226,6 +239,22 @@ void ChatSession::stop()
     }
 }
 
+bool ChatSession::clearHistory(QString& error)
+{
+    const bool hadReply = active_;
+    cancelRequests();
+    if (hadReply) {
+        emit replyFinished({}, {});
+    }
+    if (!library_.clearConversation(roleId_, error)) {
+        return false;
+    }
+    summaryAttempt_.invalidate();
+    setSummaryStatus({});
+    emit historyChanged();
+    return true;
+}
+
 bool ChatSession::request(const QString& prompt, bool proactive, QString& error)
 {
     if (busy()) {
@@ -240,13 +269,19 @@ bool ChatSession::request(const QString& prompt, bool proactive, QString& error)
     if (!provider) {
         return false;
     }
-    const qint64 through = library_.summarizedThrough(roleId_, error);
-    const auto recent = library_.chatHistory(roleId_, 20, error, through, /*includeProactive=*/false);
-    const auto memories = memoryContext(library_, roleId_, error);
+    QList<ChatMessage> recent;
+    QString memories;
+    const bool privateSession = settings_.value(privateChatSetting, false).toBool();
+    if (!privateSession) {
+        const qint64 through = library_.summarizedThrough(roleId_, error);
+        recent = library_.chatHistory(roleId_, 20, error, through, /*includeProactive=*/false);
+        memories = memoryContext(library_, roleId_, error);
+    }
+    const auto card = library_.shareFor(roleId_, error, false).card;
     if (!error.isEmpty()) {
         return false;
     }
-    auto* reply = postChat(network_, *provider, requestMessages(recent, roleName_, prompt, memories, voiceFirst_, roleCard_), true);
+    auto* reply = postChat(network_, *provider, requestMessages(recent, roleName_, prompt, memories, voiceFirst_, card, proactive), true);
     active_ = reply;
     proactiveReply_ = proactive;
     stopped_ = false;
@@ -279,7 +314,7 @@ bool ChatSession::request(const QString& prompt, bool proactive, QString& error)
         }
     };
     connect(reply, &QNetworkReply::readyRead, this, consume);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, state, prompt, proactive, consume] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, state, prompt, proactive, privateSession, consume] {
         consume();
         active_ = nullptr;
         proactiveReply_ = false;
@@ -312,20 +347,20 @@ bool ChatSession::request(const QString& prompt, bool proactive, QString& error)
                 failure = QStringLiteral("接口没有返回可显示的回复。");
             }
         }
-        if (proactive && !stopped_ && !failure.isEmpty()) {
-            state->text = localSpeech();
-            failure.clear();
-        }
+        const bool useLocalSpeech = proactive && !stopped_ && !failure.isEmpty();
         reply->deleteLater();
-        finishReply(prompt, state->text, failure, proactive);
+        finishReply(prompt, useLocalSpeech ? QString{} : state->text, failure, proactive, privateSession);
+        if (useLocalSpeech) {
+            emit proactiveFailed();
+        }
     });
     emit replyStarted();
     return true;
 }
 
-void ChatSession::finishReply(const QString& prompt, QString text, QString error, bool proactive)
+void ChatSession::finishReply(const QString& prompt, QString text, QString error, bool proactive, bool privateSession)
 {
-    if (error.isEmpty() && library_.available()) {
+    if (error.isEmpty() && library_.available() && !privateSession && !settings_.value(privateChatSetting, false).toBool()) {
         const bool saved = proactive ? library_.saveProactiveSpeech(roleId_, text, error)
                                      : library_.saveExchange(roleId_, prompt, text, error);
         if (saved) {
@@ -351,8 +386,14 @@ void ChatSession::setSummaryStatus(const QString& status)
 
 void ChatSession::organize(bool manual)
 {
+    if (settings_.value(privateChatSetting, false).toBool()) {
+        if (manual) {
+            setSummaryStatus(QStringLiteral("关闭无痕聊天后可整理旧对话。"));
+        }
+        return;
+    }
     if (roleId_.isEmpty() || !library_.available() || summaryReply_
-        || (!manual && (!settings_.value(automaticSummarySetting, true).toBool() || busy()
+        || (!manual && (!settings_.value(automaticSummarySetting, false).toBool() || busy()
                        || (summaryAttempt_.isValid() && summaryAttempt_.elapsed() < 60000)))) {
         return;
     }
@@ -395,6 +436,10 @@ void ChatSession::organize(bool manual)
         summaryReply_ = nullptr;
         consume();
         reply->deleteLater();
+        if (settings_.value(privateChatSetting, false).toBool()) {
+            setSummaryStatus({});
+            return;
+        }
         QString failure;
         const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (body->size() > 1024 * 1024) {

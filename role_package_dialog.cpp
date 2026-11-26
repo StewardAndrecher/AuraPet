@@ -1,4 +1,6 @@
 #include "role_package.h"
+#include "background_task.h"
+#include "role_card_editor.h"
 #include "role_actions.h"
 #include "companion_events.h"
 
@@ -13,7 +15,6 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
@@ -26,6 +27,7 @@
 #include <QVBoxLayout>
 
 #include <array>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -92,61 +94,6 @@ QComboBox* options(QWidget* parent, const QList<QPair<QString, QString>>& items,
     box->setCurrentIndex(qMax(0, box->findData(selected)));
     return box;
 }
-bool editCard(QWidget& parent, QJsonObject& card, const QString& roleId, const QString& roleName)
-{
-    QDialog dialog(&parent);
-    dialog.setWindowTitle(QStringLiteral("编辑角色性格与人设"));
-    dialog.resize(570, 410);
-    auto* form = new QFormLayout(&dialog);
-    auto* name = new QLineEdit(card.value(QStringLiteral("displayName")).toString(roleName), &dialog);
-    name->setMaxLength(80);
-    QStringList lines;
-    for (const auto& value : card.value(QStringLiteral("corePrompt")).toArray()) {
-        lines.append(value.toString());
-    }
-    auto* core = new QPlainTextEdit(lines.join(u'\n'), &dialog);
-    core->setPlaceholderText(QStringLiteral("写下角色的身份、性格、与用户的关系、语言习惯和表达边界。可以每行写一条。"));
-    core->setAccessibleName(QStringLiteral("角色核心提示词"));
-    auto* help = new QLabel(QStringLiteral("核心人设会用于每轮 AI 对话。已有的背景资料、对话示例和音色设置会保留。"), &dialog);
-    help->setWordWrap(true);
-    auto* count = new QLabel(&dialog);
-    const auto refreshLength = [&] {
-        count->setText(QStringLiteral("%1 / 4000 字符").arg(core->toPlainText().size()));
-    };
-    QObject::connect(core, &QPlainTextEdit::textChanged, &dialog, refreshLength);
-    form->addRow(help);
-    form->addRow(QStringLiteral("角色卡名称"), name);
-    form->addRow(QStringLiteral("核心人设"), core);
-    form->addRow(count);
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
-    form->addRow(buttons);
-    refreshLength();
-    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
-        if (name->text().trimmed().isEmpty() || core->toPlainText().trimmed().isEmpty() || core->toPlainText().size() > 4000) {
-            QMessageBox::information(&dialog, QStringLiteral("请补全角色卡"),
-                                     QStringLiteral("填写角色卡名称，以及不超过 4000 字符的核心人设。"));
-            return;
-        }
-        auto updated = card;
-        updated.insert(QStringLiteral("schemaVersion"), 1);
-        if (!updated.contains(QStringLiteral("id"))) {
-            updated.insert(QStringLiteral("id"), roleId);
-        }
-        updated.insert(QStringLiteral("displayName"), name->text().trimmed());
-        QJsonArray prompt;
-        for (const auto& line : core->toPlainText().split(u'\n')) {
-            if (!line.trimmed().isEmpty()) {
-                prompt.append(line.trimmed());
-            }
-        }
-        updated.insert(QStringLiteral("corePrompt"), prompt);
-        card = std::move(updated);
-        dialog.accept();
-    });
-    return dialog.exec() == QDialog::Accepted;
-}
-
 QTreeWidget* importContents(QWidget& parent, const RolePackage& package)
 {
     auto* tree = new QTreeWidget(&parent);
@@ -177,40 +124,8 @@ QTreeWidget* importContents(QWidget& parent, const RolePackage& package)
             row(languageLabel(language) + QStringLiteral("语料"), QStringLiteral("%1 段 WAV").arg(count));
         }
     }
-    const auto behavior = package.share.behavior;
-    if (!behavior.isEmpty()) {
-        const auto kibble = behavior.value(QStringLiteral("kibble")).toString();
-        if (!kibble.isEmpty()) {
-            row(QStringLiteral("默认猫粮"), kibble == QStringLiteral("slow") ? QStringLiteral("慢食猫粮")
-                : kibble == QStringLiteral("high") ? QStringLiteral("高能猫粮") : QStringLiteral("无"));
-        }
-        if (behavior.value(QStringLiteral("randomMovement")).isBool()) {
-            row(QStringLiteral("随机移动"), behavior.value(QStringLiteral("randomMovement")).toBool()
-                ? QStringLiteral("开启") : QStringLiteral("关闭"));
-        }
-        const auto events = behavior.value(QStringLiteral("events")).toObject();
-        for (const auto& entry : companionEvents) {
-            if (events.contains(QLatin1String(entry.key))) {
-                const auto event = events.value(QLatin1String(entry.key)).toObject();
-                const auto action = event.value(QStringLiteral("action")).toString();
-                const QMap<QString, QString> actionNames{
-                    {QStringLiteral("none"), QStringLiteral("不播动作")}, {QStringLiteral("idle"), QStringLiteral("回到待机")},
-                    {QStringLiteral("happy"), QStringLiteral("开心")}, {QStringLiteral("sleepy"), QStringLiteral("困倦")},
-                    {QStringLiteral("bounce"), QStringLiteral("轻跳")},
-                };
-                QStringList details;
-                if (actionNames.contains(action)) {
-                    details.append(actionNames.value(action));
-                }
-                const auto line = event.value(QStringLiteral("line")).toString();
-                if (!line.isEmpty()) {
-                    details.append(QStringLiteral("「%1」").arg(line));
-                }
-                if (!details.isEmpty()) {
-                    row(QString::fromUtf8(entry.label), details.join(QStringLiteral(" · ")));
-                }
-            }
-        }
+    for (const auto& [label, description] : describeRoleBehavior(package.share.behavior)) {
+        row(label, description);
     }
     tree->resizeColumnToContents(0);
     return tree;
@@ -225,9 +140,23 @@ QString importRolePackage(QWidget& parent, RoleLibrary& library, const QString& 
         QMessageBox::warning(&parent, QStringLiteral("无法导入角色"), QStringLiteral("角色库尚未就绪。"));
         return {};
     }
-    const auto package = readRolePackage(path, error);
+    using Loading = QPair<std::optional<RolePackage>, QString>;
+    const auto loaded = waitForBackground<Loading>(parent, QStringLiteral("正在校验并读取角色包…"),
+        [path](QPromise<Loading>& promise) {
+            promise.setProgressRange(0, 100);
+            Loading result;
+            result.first = readRolePackage(path, result.second, [&](int progress) {
+                promise.setProgressValue(progress);
+                return !promise.isCanceled();
+            });
+            return result;
+        });
+    if (!loaded) {
+        return {};
+    }
+    const auto& package = loaded->first;
     if (!package) {
-        QMessageBox::warning(&parent, QStringLiteral("无法导入角色包"), error);
+        QMessageBox::warning(&parent, QStringLiteral("无法导入角色包"), loaded->second);
         return {};
     }
     const auto match = library.matchingPackage(package->id, error);
@@ -241,7 +170,7 @@ QString importRolePackage(QWidget& parent, RoleLibrary& library, const QString& 
     auto* layout = new QVBoxLayout(&preview);
     auto* cover = new QLabel(&preview);
     cover->setAlignment(Qt::AlignCenter);
-    cover->setPixmap(package->cover.scaled(148, 148, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    cover->setPixmap(QPixmap::fromImage(package->cover.scaled(148, 148, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
     layout->addWidget(cover);
     auto* name = new QLabel(package->name, &preview);
     name->setTextFormat(Qt::PlainText);
@@ -249,17 +178,13 @@ QString importRolePackage(QWidget& parent, RoleLibrary& library, const QString& 
     layout->addWidget(name);
     layout->addWidget(importContents(preview, *package), 1);
     if (!package->share.card.isEmpty()) {
-        auto* inspect = new QPushButton(QStringLiteral("查看角色提示词…"), &preview);
+        auto* inspect = new QPushButton(QStringLiteral("查看角色卡…"), &preview);
         QObject::connect(inspect, &QPushButton::clicked, &preview, [&] {
-            QStringList prompt;
-            for (const auto& line : package->share.card.value(QStringLiteral("corePrompt")).toArray()) {
-                prompt.append(line.toString());
-            }
             QDialog dialog(&preview);
-            dialog.setWindowTitle(QStringLiteral("角色提示词"));
-            dialog.resize(490, 320);
+            dialog.setWindowTitle(QStringLiteral("角色卡预览"));
+            dialog.resize(650, 470);
             auto* content = new QVBoxLayout(&dialog);
-            auto* text = new QPlainTextEdit(prompt.join(u'\n'), &dialog);
+            auto* text = new QPlainTextEdit(roleCardText(package->share.card), &dialog);
             text->setReadOnly(true);
             content->addWidget(text);
             auto* done = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
@@ -321,8 +246,9 @@ void exportRolePackage(QWidget& parent, RoleLibrary& library, const QString& id,
         package.asset = library.assetFor(id, error);
     }
     if (error.isEmpty()) {
-        package.share = library.shareFor(id, error);
+        package.share = library.shareFor(id, error, false);
     }
+    const auto fileStats = error.isEmpty() ? library.shareFileStats(id, error) : ShareFileStats{};
     for (const auto slot : {ActionSlot::Idle, ActionSlot::Happy, ActionSlot::Sleepy}) {
         if (!error.isEmpty()) {
             break;
@@ -345,23 +271,19 @@ void exportRolePackage(QWidget& parent, RoleLibrary& library, const QString& id,
     auto* include = new QCheckBox(QStringLiteral("包含完整语音语料"), &exportDialog);
     auto* size = new QLabel(&exportDialog);
     layout->addWidget(size);
-    const auto count = corpusCount(package.share);
+    const auto count = fileStats.corpusCount;
     if (count) {
         include->setText(QStringLiteral("包含完整语音语料（%1 份）").arg(count));
         layout->addWidget(include);
     } else {
         include->hide();
     }
+    qint64 baseBytes = package.asset.size() + fileStats.otherBytes;
+    for (const auto& action : package.actions) {
+        baseBytes += action.bytes.size();
+    }
     const auto showSize = [&] {
-        qint64 bytes = package.asset.size();
-        for (const auto& action : package.actions) {
-            bytes += action.bytes.size();
-        }
-        for (auto it = package.share.files.cbegin(); it != package.share.files.cend(); ++it) {
-            if (include->isChecked() || !it.key().startsWith(QStringLiteral("voice/corpus/"))) {
-                bytes += it.value().size();
-            }
-        }
+        const qint64 bytes = baseBytes + (include->isChecked() ? fileStats.corpusBytes : 0);
         size->setText(QStringLiteral("压缩前素材约 %1 MiB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1));
     };
     QObject::connect(include, &QCheckBox::toggled, &exportDialog, showSize);
@@ -388,8 +310,28 @@ void exportRolePackage(QWidget& parent, RoleLibrary& library, const QString& id,
             return;
         }
     }
-    if (!writeRolePackage(file, package, include->isChecked(), error)) {
+    const bool includeCorpus = include->isChecked();
+    package.share.files = library.shareFilesFor(id, includeCorpus, error);
+    if (!error.isEmpty()) {
         QMessageBox::warning(&parent, QStringLiteral("导出角色失败"), error);
+        return;
+    }
+    using Saving = QPair<bool, QString>;
+    const auto saved = waitForBackground<Saving>(parent, QStringLiteral("正在压缩并保存角色包…"),
+        [package = std::move(package), file, includeCorpus](QPromise<Saving>& promise) {
+            promise.setProgressRange(0, 100);
+            Saving result;
+            result.first = writeRolePackage(file, package, includeCorpus, result.second, [&](int progress) {
+                promise.setProgressValue(progress);
+                return !promise.isCanceled();
+            });
+            return result;
+        });
+    if (!saved) {
+        return;
+    }
+    if (!saved->first) {
+        QMessageBox::warning(&parent, QStringLiteral("导出角色失败"), saved->second);
         return;
     }
     QMessageBox::information(&parent, QStringLiteral("分享包已保存"), QDir::toNativeSeparators(file));
@@ -415,7 +357,7 @@ bool editRoleShare(QWidget& parent, RoleLibrary& library, const QString& id)
     scroll->setWidget(body);
     auto* form = new QFormLayout(body);
     auto* card = new QPushButton(&editor);
-    auto* modifyCard = new QPushButton(QStringLiteral("编辑性格与人设…"), &editor);
+    auto* modifyCard = new QPushButton(QStringLiteral("编辑角色卡…"), &editor);
     const auto refreshCard = [&] {
         card->setText(share.card.isEmpty() ? QStringLiteral("选择角色卡 JSON…") : QStringLiteral("已关联角色卡 · 更换…"));
     };
@@ -435,7 +377,7 @@ bool editRoleShare(QWidget& parent, RoleLibrary& library, const QString& id)
                 break;
             }
         }
-        if (editCard(editor, share.card, id, name)) {
+        if (editRoleCard(editor, share.card, id, name)) {
             refreshCard();
         }
     });
@@ -493,6 +435,7 @@ bool editRoleShare(QWidget& parent, RoleLibrary& library, const QString& id)
             auto it = share.files.lowerBound(prefix);
             while (it != share.files.end() && it.key().startsWith(prefix)) {
                 share.corpusNames.remove(it.key());
+                share.corpusTexts.remove(it.key());
                 it = share.files.erase(it);
             }
         };
@@ -547,40 +490,26 @@ bool editRoleShare(QWidget& parent, RoleLibrary& library, const QString& id)
             share = std::move(candidate);
             refresh();
         });
-        QObject::connect(corpus, &QPushButton::clicked, &editor, [&, prefix, clear, refresh] {
-            const auto path = QFileDialog::getExistingDirectory(&editor, QStringLiteral("选择 WAV 语料目录"), documents().path());
+        QObject::connect(corpus, &QPushButton::clicked, &editor, [&, language, refresh] {
+            const auto path = QFileDialog::getExistingDirectory(&editor, QStringLiteral("选择 WAV 语音目录"), documents().path());
             if (path.isEmpty()) {
                 return;
             }
-            const QDir folder(path);
-            const auto wavs = folder.entryInfoList({QStringLiteral("*.wav"), QStringLiteral("*.WAV")},
-                QDir::Files | QDir::Readable | QDir::NoSymLinks, QDir::Name);
-            if (wavs.isEmpty() || wavs.size() > 200) {
-                QMessageBox::warning(&editor, QStringLiteral("无法关联语料"), QStringLiteral("请选择包含 1 到 200 个 WAV 的文件夹。"));
+            using CorpusLoad = std::tuple<bool, RoleShare, QString>;
+            auto loaded = waitForBackground<CorpusLoad>(editor, QStringLiteral("正在读取语音目录…"),
+                [draft = share, language, path](QPromise<CorpusLoad>&) mutable {
+                    QString problem;
+                    const bool ok = replaceRoleCorpusFolder(draft, language, path, problem);
+                    return CorpusLoad{ok, std::move(draft), std::move(problem)};
+                });
+            if (!loaded) {
                 return;
             }
-            auto previous = share.files;
-            auto previousNames = share.corpusNames;
-            clear();
-            qint64 total = 0;
-            int index = 1;
-            for (const auto& wav : wavs) {
-                total += wav.size();
-                if (total > 128 * 1024 * 1024 || wav.size() > 16 * 1024 * 1024) {
-                    break;
-                }
-                const auto name = prefix + QStringLiteral("%1.wav").arg(index++, 3, 10, u'0');
-                share.files.insert(name, readBounded(wav.absoluteFilePath(), 16 * 1024 * 1024));
-                share.corpusNames.insert(name, wav.fileName());
-            }
-            QString problem;
-            if (index - 1 != wavs.size() || !validateRoleShare(share, problem)) {
-                share.files = std::move(previous);
-                share.corpusNames = std::move(previousNames);
-                QMessageBox::warning(&editor, QStringLiteral("无法关联语料"), problem.isEmpty()
-                    ? QStringLiteral("每个 WAV 上限为 16 MiB，全部语料上限为 128 MiB。") : problem);
+            if (!std::get<0>(*loaded)) {
+                QMessageBox::warning(&editor, QStringLiteral("无法关联语料"), std::get<2>(*loaded));
                 return;
             }
+            share = std::move(std::get<1>(*loaded));
             refresh();
         });
     }
@@ -604,7 +533,12 @@ bool editRoleShare(QWidget& parent, RoleLibrary& library, const QString& id)
         entry.line->setMaxLength(280);
         entry.line->setPlaceholderText(QStringLiteral("可选固定台词"));
         layout->addWidget(entry.action);
-        layout->addWidget(entry.line, 1);
+        if (entry.key == QStringLiteral("doubleClick")) {
+            entry.line->hide();
+            layout->addWidget(new QLabel(QStringLiteral("台词在角色卡的「随机发言」中管理"), row), 1);
+        } else {
+            layout->addWidget(entry.line, 1);
+        }
         form->addRow(entry.label, row);
     }
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &editor);
@@ -613,7 +547,9 @@ bool editRoleShare(QWidget& parent, RoleLibrary& library, const QString& id)
     QObject::connect(buttons, &QDialogButtonBox::accepted, &editor, [&] {
         const auto kibbleValue = kibble->currentData().toString();
         const auto movementValue = roam->currentData().toString();
-        share.behavior = {};
+        share.behavior.remove(QStringLiteral("kibble"));
+        share.behavior.remove(QStringLiteral("randomMovement"));
+        share.behavior.remove(QStringLiteral("events"));
         if (!kibbleValue.isEmpty()) {
             share.behavior.insert(QStringLiteral("kibble"), kibbleValue);
         }

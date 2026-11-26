@@ -1,5 +1,4 @@
 #include "pet_treats.h"
-#include "pet_motion_rules.h"
 #include "pet_window.h"
 
 #include <QAbstractButton>
@@ -21,30 +20,6 @@ namespace {
 constexpr double treatIconSize = 36;
 constexpr double pi = 3.141592653589793;
 constexpr int effectMs = 830;
-
-struct TreatDetails {
-    QString effect;
-    QString usage;
-};
-
-TreatDetails detailsFor(PetTreat treat)
-{
-    switch (treat) {
-    case PetTreat::SlowKibble:
-    case PetTreat::HighKibble: {
-        const auto rates = kibbleRates(treat == PetTreat::SlowKibble ? Kibble::Slow : Kibble::High);
-        return {QStringLiteral("待机 +%1 点/秒，运动 −%2 点/秒").arg(rates.recovery).arg(rates.consumption),
-                QStringLiteral("点击装载，再点当前猫粮可卸下")};
-    }
-    case PetTreat::YarnBall:
-        return {QStringLiteral("立即消耗最多 %1 点活跃度").arg(yarnActivityCost),
-                QStringLiteral("点击陪玩，活跃度不足时少扣")};
-    case PetTreat::Catnip:
-        return {QStringLiteral("立即补充最多 %1 点活跃度").arg(catnipActivityGain),
-                QStringLiteral("点击投喂，最多补到 100 点")};
-    }
-    return {};
-}
 
 bool darkPalette(const QWidget& widget)
 {
@@ -76,6 +51,108 @@ void leaf(QPainter& painter, const QColor& light, const QColor& shade)
     painter.drawLine(QPointF(0, -4), QPointF(0, 6));
 }
 
+void drawModeIcon(QPainter& painter, CompanionMode mode, QRectF area, const QColor& color, double elapsed = 0, bool hovered = false)
+{
+    painter.save();
+    painter.translate(area.center());
+    const double s = qMin(area.width(), area.height()) / 20.0;
+    painter.scale(s, s);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPen pen(color, 1.55, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    switch (mode) {
+    case CompanionMode::Auto: {
+        const double pulse = hovered ? std::sin(elapsed * 7.0) * 0.6 : 0.0;
+        painter.drawEllipse(QPointF(0, 0), 6.2 + pulse * 0.4, 6.2 + pulse * 0.4);
+        painter.setPen(Qt::NoPen);
+        star(painter, QPointF(0, 0), 3.6 + pulse * 0.35, color);
+        star(painter, QPointF(5.5, -5.5), 1.8, color);
+        break;
+    }
+    case CompanionMode::Play: {
+        if (hovered) {
+            painter.rotate(std::sin(elapsed * 10.0) * 6.0);
+        }
+        QPainterPath bolt;
+        bolt.moveTo(1.2, -7.2);
+        bolt.lineTo(-4.8, 0.8);
+        bolt.lineTo(0.2, 0.8);
+        bolt.lineTo(-1.4, 7.2);
+        bolt.lineTo(4.8, -0.9);
+        bolt.lineTo(-0.2, -0.9);
+        bolt.closeSubpath();
+        painter.setPen(QPen(color, 1.3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        QColor fill = color;
+        fill.setAlphaF(0.22);
+        painter.setBrush(fill);
+        painter.drawPath(bolt);
+        break;
+    }
+    case CompanionMode::Daily: {
+        const double r = 3.2;
+        painter.drawEllipse(QPointF(0, 0), r, r);
+        const double rot = hovered ? elapsed * 0.9 : 0.0;
+        for (int i = 0; i < 6; ++i) {
+            const double a = rot + i * pi / 3.0;
+            painter.drawLine(QPointF(std::cos(a) * 5.2, std::sin(a) * 5.2),
+                             QPointF(std::cos(a) * 7.1, std::sin(a) * 7.1));
+        }
+        break;
+    }
+    case CompanionMode::Focus: {
+        if (hovered) {
+            painter.rotate(std::sin(elapsed * 4.5) * 4.0);
+        }
+        QPainterPath moon;
+        moon.moveTo(1.8, -6.5);
+        moon.cubicTo(-4.8, -5.6, -6.6, 1.8, -1.6, 5.8);
+        moon.cubicTo(2.4, 8.2, 6.8, 5.2, 6.5, 2.2);
+        moon.cubicTo(2.4, 4.1, -1.8, 1.4, -1.2, -2.5);
+        moon.cubicTo(-0.8, -4.6, 0.4, -5.8, 1.8, -6.5);
+        QColor fill = color;
+        fill.setAlphaF(0.20);
+        painter.setBrush(fill);
+        painter.drawPath(moon);
+        break;
+    }
+    }
+    painter.restore();
+}
+
+void drawActionIcon(QPainter& painter, PetTreat treat, QRectF area, const QColor& color, double elapsed = 0, bool hovered = false)
+{
+    painter.save();
+    painter.translate(area.center());
+    const double s = qMin(area.width(), area.height()) / 18.0;
+    painter.scale(s, s);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    if (treat == PetTreat::YarnBall) {
+        const double bounce = hovered ? -std::abs(std::sin(elapsed * 9.0)) * 1.4 : 0.0;
+        painter.translate(0, bounce);
+        painter.setPen(Qt::NoPen);
+        star(painter, QPointF(-1.2, 0.5), 5.6, color);
+        star(painter, QPointF(4.8, -4.4), 2.5, color);
+        star(painter, QPointF(5.2, 4.2), 1.9, color);
+    } else {
+        painter.setPen(QPen(color, 1.45, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(QRectF(-6.8, -4.2, 12.2, 8.4), 2.2, 2.2);
+        painter.setBrush(color);
+        painter.setPen(Qt::NoPen);
+        painter.drawRoundedRect(QRectF(5.6, -1.9, 1.9, 3.8), 0.8, 0.8);
+        const double fillRatio = hovered ? (0.45 + 0.55 * (0.5 + 0.5 * std::sin(elapsed * 7.0))) : 0.72;
+        QColor fill = color;
+        fill.setAlphaF(0.82);
+        painter.setBrush(fill);
+        painter.drawRoundedRect(QRectF(-5.1, -2.5, 8.8 * fillRatio, 5.0), 1.1, 1.1);
+    }
+    painter.restore();
+}
+
 void drawIcon(QPainter& painter, PetTreat treat, QRectF area, double elapsed = 0, bool hovered = false)
 {
     painter.save();
@@ -85,30 +162,11 @@ void drawIcon(QPainter& painter, PetTreat treat, QRectF area, double elapsed = 0
 
     switch (treat) {
     case PetTreat::SlowKibble:
-    case PetTreat::HighKibble: {
-        const bool high = treat == PetTreat::HighKibble;
-        if (hovered && !high) {
-            painter.translate(18, 21);
-            painter.rotate(std::sin(elapsed * 6) * 5);
-            painter.translate(-18, -21);
-        }
-        const std::array centers{QPointF(11, 23), QPointF(23, 23), QPointF(18, 13)};
-        for (const auto& center : centers) {
-            QRadialGradient glaze(center - QPointF(2, 2), 8);
-            glaze.setColorAt(0, high ? QColor("#FFF3CB") : QColor("#FFF0D9"));
-            glaze.setColorAt(1, high ? QColor("#E9A46B") : QColor("#CF9D7B"));
-            painter.setPen(QPen(high ? QColor("#E4A478") : QColor("#D5A384"), .7));
-            painter.setBrush(glaze);
-            painter.drawEllipse(center, high ? 6.5 : 6.1, high ? 6.4 : 4.8);
-        }
-        if (high) {
-            QColor glint("#FFFDF2");
-            glint.setAlphaF(hovered ? .65 + .35 * std::sin(elapsed * 10) : .9);
-            star(painter, QPointF(28, 10), 4.1, glint);
-            star(painter, QPointF(8, 13), 2.4, glint);
-        }
+        drawModeIcon(painter, CompanionMode::Focus, QRectF(4, 4, 28, 28), QColor("#8CA6DB"), elapsed, hovered);
         break;
-    }
+    case PetTreat::HighKibble:
+        drawModeIcon(painter, CompanionMode::Play, QRectF(4, 4, 28, 28), QColor("#F0BA63"), elapsed, hovered);
+        break;
     case PetTreat::YarnBall: {
         const QPointF center(16.3, 17.2);
         QPainterPath ball;
@@ -157,15 +215,15 @@ void drawIcon(QPainter& painter, PetTreat treat, QRectF area, double elapsed = 0
     painter.restore();
 }
 
-class TreatButton : public QAbstractButton {
+class ModeSegmentButton : public QAbstractButton {
 public:
-    TreatButton(PetTreat treat, QWidget* parent) : QAbstractButton(parent), treat_(treat)
+    ModeSegmentButton(CompanionMode mode, QWidget* parent) : QAbstractButton(parent), mode_(mode)
     {
-        setText(treatName(treat));
-        setAccessibleName(text());
+        setText(companionModeShortName(mode));
+        setAccessibleName(companionModeName(mode));
         setFocusPolicy(Qt::StrongFocus);
         setMouseTracking(true);
-        setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setCursor(Qt::PointingHandCursor);
         hover_.setInterval(32);
         connect(&hover_, &QTimer::timeout, this, qOverload<>(&QWidget::update));
@@ -173,13 +231,13 @@ public:
 
     QSize sizeHint() const override
     {
-        return {qMax(65, fontMetrics().horizontalAdvance(text()) + 12), 58};
+        return {qMax(58, fontMetrics().horizontalAdvance(text()) + 14), 48};
     }
 
-    void setLoaded(bool loaded)
+    void setSelected(bool selected)
     {
-        loaded_ = loaded;
-        setAccessibleDescription((loaded ? QStringLiteral("生效中。") : QString()) + treatDescription(treat_));
+        selected_ = selected;
+        setAccessibleDescription((selected ? QStringLiteral("当前模式。") : QString()) + companionModeDescription(mode_));
         update();
     }
 
@@ -191,7 +249,7 @@ protected:
         entered_.start();
         hover_.start();
         update();
-        hoverChanged(true);
+        if (hoverChanged) hoverChanged(true);
         QAbstractButton::enterEvent(event);
     }
 
@@ -199,7 +257,7 @@ protected:
     {
         hover_.stop();
         update();
-        hoverChanged(false);
+        if (hoverChanged) hoverChanged(false);
         QAbstractButton::leaveEvent(event);
     }
 
@@ -214,51 +272,226 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         const bool dark = darkPalette(*this);
+        const bool hovered = underMouse();
         const QRectF tile = QRectF(rect()).adjusted(1, 1, -1, -1);
-        if (underMouse() || hasFocus() || loaded_) {
-            painter.setBrush(dark ? QColor(115, 89, 63, 105) : QColor(255, 240, 215, 195));
-            painter.setPen(loaded_ || hasFocus()
-                ? QPen(dark ? QColor("#CAA574") : QColor("#DBAE75"), .9) : QPen(Qt::NoPen));
-            painter.drawRoundedRect(tile, 10, 10);
+
+        if (selected_) {
+            painter.setBrush(dark ? QColor(232, 176, 92, hovered ? 56 : 38)
+                                  : QColor(218, 152, 56, hovered ? 48 : 34));
+            painter.setPen(QPen(dark ? QColor(232, 176, 92, 190) : QColor(204, 138, 42, 170), 1.0));
+            painter.drawRoundedRect(tile, 8, 8);
+        } else if (hovered || hasFocus()) {
+            painter.setBrush(dark ? QColor(255, 255, 255, isDown() ? 28 : 16)
+                                  : QColor(0, 0, 0, isDown() ? 18 : 10));
+            painter.setPen(hasFocus()
+                ? QPen(dark ? QColor(232, 176, 92, 140) : QColor(204, 138, 42, 140), 1.0)
+                : QPen(Qt::NoPen));
+            painter.drawRoundedRect(tile, 8, 8);
         }
-        const double size = isDown() ? 31 : treatIconSize;
-        const bool hovered = hover_.isActive();
-        drawIcon(painter, treat_, QRectF((width() - size) / 2, 21 - size / 2, size, size),
-                 hovered ? entered_.elapsed() / 1000.0 : 0, hovered);
-        if (loaded_) {
+
+        const QColor iconColor = selected_
+            ? (dark ? QColor("#F7CB7A") : QColor("#B97518"))
+            : (dark ? QColor("#C6CBD6") : QColor("#4A505C"));
+        const double size = isDown() ? 17.5 : 19.5;
+        const bool animated = hover_.isActive();
+        drawModeIcon(painter, mode_, QRectF((width() - size) / 2.0, 15.0 - size / 2.0, size, size),
+                     iconColor, animated ? entered_.elapsed() / 1000.0 : 0.0, animated);
+
+        if (selected_) {
             painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor("#E9B771"));
-            painter.drawEllipse(QPointF(width() - 10, 10), 3.2, 3.2);
-            painter.setBrush(QColor("#FFF8E9"));
-            painter.drawEllipse(QPointF(width() - 10, 10), 1.6, 1.6);
+            painter.setBrush(dark ? QColor("#F0BA63") : QColor("#D4902A"));
+            painter.drawEllipse(QPointF(width() - 7.5, 7.5), 2.6, 2.6);
         }
-        painter.setPen(dark ? QColor("#F3E8D9") : QColor("#523F38"));
-        painter.drawText(QRect(0, 38, width(), 16), Qt::AlignCenter, text());
+
+        QFont f = font();
+        if (f.pointSizeF() > 9.0) {
+            f.setPointSizeF(f.pointSizeF() - 1.0);
+        }
+        if (selected_) {
+            f.setWeight(QFont::DemiBold);
+        }
+        painter.setFont(f);
+        painter.setPen(selected_
+            ? (dark ? QColor("#FCE3B4") : QColor("#8A5410"))
+            : (dark ? QColor("#DFE3EB") : QColor("#2D3038")));
+        painter.drawText(QRect(0, 28, width(), 16), Qt::AlignCenter, text());
+    }
+
+private:
+    CompanionMode mode_;
+    bool selected_ = false;
+    QTimer hover_;
+    QElapsedTimer entered_;
+};
+
+class QuickActionPill : public QAbstractButton {
+public:
+    QuickActionPill(PetTreat treat, const QString& label, const QString& deltaTag, QWidget* parent)
+        : QAbstractButton(parent), treat_(treat), deltaTag_(deltaTag)
+    {
+        setText(label);
+        setAccessibleName(label);
+        setAccessibleDescription(treatDescription(treat));
+        setFocusPolicy(Qt::StrongFocus);
+        setMouseTracking(true);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setCursor(Qt::PointingHandCursor);
+        hover_.setInterval(32);
+        connect(&hover_, &QTimer::timeout, this, qOverload<>(&QWidget::update));
+    }
+
+    QSize sizeHint() const override
+    {
+        return {116, 30};
+    }
+
+    std::function<void(bool)> hoverChanged;
+
+protected:
+    void enterEvent(QEnterEvent* event) override
+    {
+        entered_.start();
+        hover_.start();
+        update();
+        if (hoverChanged) hoverChanged(true);
+        QAbstractButton::enterEvent(event);
+    }
+
+    void leaveEvent(QEvent* event) override
+    {
+        hover_.stop();
+        update();
+        if (hoverChanged) hoverChanged(false);
+        QAbstractButton::leaveEvent(event);
+    }
+
+    void hideEvent(QHideEvent* event) override
+    {
+        hover_.stop();
+        QAbstractButton::hideEvent(event);
+    }
+
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const bool dark = darkPalette(*this);
+        const bool hovered = underMouse();
+        const QRectF pill = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+
+        QColor bg = dark
+            ? QColor(255, 255, 255, isDown() ? 30 : (hovered ? 22 : 11))
+            : QColor(0, 0, 0, isDown() ? 20 : (hovered ? 13 : 6));
+        QColor border = dark
+            ? QColor(255, 255, 255, hovered ? 38 : 18)
+            : QColor(0, 0, 0, hovered ? 28 : 14);
+        painter.setBrush(bg);
+        painter.setPen(QPen(border, 1.0));
+        painter.drawRoundedRect(pill, 7, 7);
+
+        const QColor accent = treat_ == PetTreat::YarnBall
+            ? (dark ? QColor("#F0A8C8") : QColor("#C25B88"))
+            : (dark ? QColor("#98D89E") : QColor("#3A9149"));
+        const bool animated = hover_.isActive();
+        drawActionIcon(painter, treat_, QRectF(9, (height() - 15) / 2.0, 15, 15),
+                       accent, animated ? entered_.elapsed() / 1000.0 : 0.0, animated);
+
+        QFont labelFont = font();
+        if (labelFont.pointSizeF() > 9.0) {
+            labelFont.setPointSizeF(labelFont.pointSizeF() - 1.0);
+        }
+        painter.setFont(labelFont);
+        painter.setPen(dark ? QColor("#E6E9F0") : QColor("#252830"));
+        painter.drawText(QRect(28, 0, width() - 62, height()), Qt::AlignVCenter | Qt::AlignLeft, text());
+
+        QFont tagFont = labelFont;
+        if (tagFont.pointSizeF() > 8.0) {
+            tagFont.setPointSizeF(tagFont.pointSizeF() - 1.5);
+        }
+        painter.setFont(tagFont);
+        painter.setPen(accent);
+        painter.drawText(QRect(0, 0, width() - 9, height()), Qt::AlignVCenter | Qt::AlignRight, deltaTag_);
     }
 
 private:
     PetTreat treat_;
-    bool loaded_ = false;
+    QString deltaTag_;
     QTimer hover_;
     QElapsedTimer entered_;
 };
 }
 
+QString companionModeName(CompanionMode mode)
+{
+    switch (mode) {
+    case CompanionMode::Auto: return QStringLiteral("智能自动");
+    case CompanionMode::Play: return QStringLiteral("互动游玩");
+    case CompanionMode::Daily: return QStringLiteral("日常陪伴");
+    case CompanionMode::Focus: return QStringLiteral("静伴专注");
+    }
+    return QStringLiteral("智能自动");
+}
+
+QString companionModeShortName(CompanionMode mode)
+{
+    switch (mode) {
+    case CompanionMode::Auto: return QStringLiteral("自动");
+    case CompanionMode::Play: return QStringLiteral("游玩");
+    case CompanionMode::Daily: return QStringLiteral("日常");
+    case CompanionMode::Focus: return QStringLiteral("静伴");
+    }
+    return QStringLiteral("自动");
+}
+
+QString companionModeDescription(CompanionMode mode)
+{
+    switch (mode) {
+    case CompanionMode::Auto:
+        return QStringLiteral("自动：跟随活跃窗口与全屏状态自动切换陪伴节奏");
+    case CompanionMode::Play:
+        return QStringLiteral("游玩：高频移动与互动发言（每 2–4 分钟），适合陪玩");
+    case CompanionMode::Daily:
+        return QStringLiteral("日常：适中节奏，偶尔走动与轻问候（每 12–20 分钟）");
+    case CompanionMode::Focus:
+        return QStringLiteral("静伴：低频小范围微动，关闭主动打扰与弹窗");
+    }
+    return {};
+}
+
+QString effectiveRhythmName(EffectiveRhythm rhythm)
+{
+    switch (rhythm) {
+    case EffectiveRhythm::Play: return QStringLiteral("游玩中");
+    case EffectiveRhythm::Daily: return QStringLiteral("日常中");
+    case EffectiveRhythm::Focus: return QStringLiteral("静伴中");
+    }
+    return QStringLiteral("日常中");
+}
+
 QString treatName(PetTreat treat)
 {
     switch (treat) {
-    case PetTreat::SlowKibble: return QStringLiteral("慢食猫粮");
-    case PetTreat::HighKibble: return QStringLiteral("高能猫粮");
-    case PetTreat::YarnBall: return QStringLiteral("毛线球");
-    case PetTreat::Catnip: return QStringLiteral("猫薄荷");
+    case PetTreat::SlowKibble: return QStringLiteral("静伴专注");
+    case PetTreat::HighKibble: return QStringLiteral("互动游玩");
+    case PetTreat::YarnBall: return QStringLiteral("逗一逗");
+    case PetTreat::Catnip: return QStringLiteral("充个电");
     }
     return {};
 }
 
 QString treatDescription(PetTreat treat)
 {
-    const auto details = detailsFor(treat);
-    return QStringLiteral("效果  %1\n用法  %2").arg(details.effect, details.usage);
+    switch (treat) {
+    case PetTreat::SlowKibble:
+        return companionModeDescription(CompanionMode::Focus);
+    case PetTreat::HighKibble:
+        return companionModeDescription(CompanionMode::Play);
+    case PetTreat::YarnBall:
+        return QStringLiteral("逗一逗：触发互动动作并消耗最多 %1 点活跃度").arg(yarnActivityCost);
+    case PetTreat::Catnip:
+        return QStringLiteral("充个电：快速补充最多 %1 点活跃度（上限 100）").arg(catnipActivityGain);
+    }
+    return {};
 }
 
 QIcon treatIcon(PetTreat treat)
@@ -277,54 +510,115 @@ TreatCard::TreatCard()
 {
     setObjectName(QStringLiteral("petTreatCard"));
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(14, 11, 14, 10);
-    layout->setSpacing(4);
-    auto* title = new QLabel(QStringLiteral("小食与玩具"), this);
-    auto heading = title->font();
-    heading.setBold(true);
-    title->setFont(heading);
-    layout->addWidget(title);
+    layout->setContentsMargins(14, 10, 14, 9);
+    layout->setSpacing(6);
 
-    auto* items = new QHBoxLayout;
-    items->setSpacing(2);
-    for (size_t index = 0; index < petTreats.size(); ++index) {
-        const auto treat = petTreats[index];
-        auto* button = new TreatButton(treat, this);
-        buttons_[index] = button;
-        items->addWidget(button);
-        connect(button, &QAbstractButton::clicked, this, [this, treat] { if (picked) picked(treat); });
-        button->hoverChanged = [this, treat](bool entered) {
+    auto* headerRow = new QHBoxLayout;
+    headerRow->setContentsMargins(2, 0, 2, 0);
+    headerRow->setSpacing(6);
+
+    title_ = new QLabel(QStringLiteral("陪伴模式"), this);
+    auto heading = title_->font();
+    heading.setBold(true);
+    if (heading.pointSizeF() > 9.5) {
+        heading.setPointSizeF(heading.pointSizeF() - 0.5);
+    }
+    title_->setFont(heading);
+    headerRow->addWidget(title_);
+    headerRow->addStretch(1);
+
+    statusBadge_ = new QLabel(this);
+    auto badgeFont = statusBadge_->font();
+    if (badgeFont.pointSizeF() > 8.5) {
+        badgeFont.setPointSizeF(badgeFont.pointSizeF() - 2.0);
+    }
+    statusBadge_->setFont(badgeFont);
+    headerRow->addWidget(statusBadge_);
+    layout->addLayout(headerRow);
+
+    auto* modesRow = new QHBoxLayout;
+    modesRow->setContentsMargins(0, 0, 0, 0);
+    modesRow->setSpacing(4);
+    for (size_t index = 0; index < companionModes.size(); ++index) {
+        const auto mode = companionModes[index];
+        auto* button = new ModeSegmentButton(mode, this);
+        modeButtons_[index] = button;
+        modesRow->addWidget(button, 1);
+        connect(button, &QAbstractButton::clicked, this, [this, mode] {
+            if (modeSelected) {
+                modeSelected(mode);
+            }
+        });
+        const QString key = QStringLiteral("mode_%1").arg(static_cast<int>(mode));
+        button->hoverChanged = [this, mode, key](bool entered) {
             if (entered) {
-                showDetails(treat);
-            } else if (hovered_ == treat) {
-                showDetails(std::nullopt);
+                hoveredKey_ = key;
+                showHintText(companionModeDescription(mode));
+            } else if (hoveredKey_ == key) {
+                hoveredKey_.clear();
+                showHintText({});
             }
         };
     }
-    layout->addLayout(items);
+    layout->addLayout(modesRow);
+
+    auto* quickRow = new QHBoxLayout;
+    quickRow->setContentsMargins(0, 1, 0, 0);
+    quickRow->setSpacing(6);
+    auto* teaseBtn = new QuickActionPill(
+        PetTreat::YarnBall, QStringLiteral("逗一逗"), QStringLiteral("-%1").arg(yarnActivityCost), this);
+    auto* rechargeBtn = new QuickActionPill(
+        PetTreat::Catnip, QStringLiteral("充个电"), QStringLiteral("+%1").arg(catnipActivityGain), this);
+    teaseButton_ = teaseBtn;
+    rechargeButton_ = rechargeBtn;
+    quickRow->addWidget(teaseBtn, 1);
+    quickRow->addWidget(rechargeBtn, 1);
+    connect(teaseBtn, &QAbstractButton::clicked, this, [this] {
+        if (picked) picked(PetTreat::YarnBall);
+    });
+    connect(rechargeBtn, &QAbstractButton::clicked, this, [this] {
+        if (picked) picked(PetTreat::Catnip);
+    });
+    teaseBtn->hoverChanged = [this](bool entered) {
+        const QString key = QStringLiteral("act_tease");
+        if (entered) {
+            hoveredKey_ = key;
+            showHintText(treatDescription(PetTreat::YarnBall));
+        } else if (hoveredKey_ == key) {
+            hoveredKey_.clear();
+            showHintText({});
+        }
+    };
+    rechargeBtn->hoverChanged = [this](bool entered) {
+        const QString key = QStringLiteral("act_recharge");
+        if (entered) {
+            hoveredKey_ = key;
+            showHintText(treatDescription(PetTreat::Catnip));
+        } else if (hoveredKey_ == key) {
+            hoveredKey_.clear();
+            showHintText({});
+        }
+    };
+    layout->addLayout(quickRow);
 
     footer_ = new QStackedWidget(this);
-    status_ = new QLabel(footer_);
-    auto caption = status_->font();
-    if (caption.pointSizeF() > 7) {
-        caption.setPointSizeF(caption.pointSizeF() - 1);
+    auto caption = font();
+    if (caption.pointSizeF() > 8.5) {
+        caption.setPointSizeF(caption.pointSizeF() - 2.0);
     }
-    status_->setFont(caption);
+    hint_ = new QLabel(QStringLiteral("悬停查看节奏说明 · 专注计时自动切静伴"), footer_);
+    hint_->setFont(caption);
+    hint_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
     details_ = new QLabel(footer_);
     details_->setObjectName(QStringLiteral("petTreatDetails"));
     details_->setTextFormat(Qt::PlainText);
     details_->setFont(caption);
+    details_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
     const auto metrics = details_->fontMetrics();
-    int width = 0;
-    for (const auto treat : petTreats) {
-        const auto description = treatDescription(treat);
-        for (const auto& line : description.split(u'\n')) {
-            width = qMax(width, metrics.horizontalAdvance(line));
-        }
-    }
-    footer_->setMinimumWidth(width + 2);
-    footer_->setFixedHeight(metrics.lineSpacing() * 2 + 4);
-    footer_->addWidget(status_);
+    footer_->setFixedHeight(metrics.lineSpacing() + 2);
+    footer_->addWidget(hint_);
     footer_->addWidget(details_);
     layout->addWidget(footer_);
 
@@ -332,43 +626,104 @@ TreatCard::TreatCard()
     opacity->setOpacity(1);
     details_->setGraphicsEffect(opacity);
     fade_ = new QPropertyAnimation(opacity, "opacity", details_);
-    fade_->setDuration(135);
+    fade_->setDuration(110);
     fade_->setStartValue(0.0);
     fade_->setEndValue(1.0);
-    setLoaded(std::nullopt);
+    setCompanionState(CompanionMode::Auto, EffectiveRhythm::Daily);
+}
+
+void TreatCard::updateThemeColors(bool force)
+{
+    const bool dark = darkPalette(*this);
+    if (!force && themeInitialized_ && dark == lastDark_) {
+        return;
+    }
+    themeInitialized_ = true;
+    lastDark_ = dark;
+    title_->setStyleSheet(dark ? QStringLiteral("color: #EAECEF;") : QStringLiteral("color: #20232A;"));
+    const bool accented = !overrideTag_.isEmpty() || effectiveRhythm_ == EffectiveRhythm::Play || userMode_ == CompanionMode::Auto;
+    if (accented) {
+        statusBadge_->setStyleSheet(dark
+            ? QStringLiteral("QLabel { color: #FAD99B; background: rgba(232,176,92,0.16);"
+                             "border: 1px solid rgba(232,176,92,0.34); border-radius: 6px; padding: 1px 6px; }")
+            : QStringLiteral("QLabel { color: #8A5410; background: rgba(218,152,56,0.15);"
+                             "border: 1px solid rgba(204,138,42,0.32); border-radius: 6px; padding: 1px 6px; }"));
+    } else {
+        statusBadge_->setStyleSheet(dark
+            ? QStringLiteral("QLabel { color: #9CA3AF; background: rgba(255,255,255,0.06);"
+                             "border-radius: 6px; padding: 1px 6px; }")
+            : QStringLiteral("QLabel { color: #5C626E; background: rgba(0,0,0,0.05);"
+                             "border-radius: 6px; padding: 1px 6px; }"));
+    }
+    const QString muted = dark ? QStringLiteral("color: #9399A6;") : QStringLiteral("color: #6B7280;");
+    hint_->setStyleSheet(muted);
+    details_->setStyleSheet(dark ? QStringLiteral("color: #D2D6DF;") : QStringLiteral("color: #374151;"));
 }
 
 void TreatCard::setLoaded(std::optional<PetTreat> treat)
 {
-    status_->setText(treat ? QStringLiteral("%1 · 生效中").arg(treatName(*treat))
-                           : QStringLiteral("猫粮槽空闲"));
-    for (size_t index = 0; index < petTreats.size(); ++index) {
-        static_cast<TreatButton*>(buttons_[index])->setLoaded(treat == petTreats[index]);
+    if (!treat) {
+        setCompanionState(CompanionMode::Daily, EffectiveRhythm::Daily);
+    } else if (*treat == PetTreat::HighKibble) {
+        setCompanionState(CompanionMode::Play, EffectiveRhythm::Play);
+    } else if (*treat == PetTreat::SlowKibble) {
+        setCompanionState(CompanionMode::Focus, EffectiveRhythm::Focus);
     }
 }
 
-void TreatCard::showDetails(std::optional<PetTreat> treat)
+void TreatCard::setCompanionState(CompanionMode userMode, EffectiveRhythm effectiveRhythm, const QString& overrideTag)
 {
-    if (hovered_ == treat) {
-        return;
+    userMode_ = userMode;
+    effectiveRhythm_ = effectiveRhythm;
+    overrideTag_ = overrideTag;
+    if (!overrideTag.isEmpty()) {
+        statusBadge_->setText(overrideTag);
+    } else if (userMode == CompanionMode::Auto) {
+        statusBadge_->setText(QStringLiteral("自动 · %1").arg(effectiveRhythmName(effectiveRhythm)));
+    } else {
+        statusBadge_->setText(QStringLiteral("%1 · 生效中").arg(companionModeName(userMode)));
     }
-    const bool wasShowing = hovered_.has_value();
-    hovered_ = treat;
-    if (treat) {
-        details_->setText(treatDescription(*treat));
+    for (size_t index = 0; index < companionModes.size(); ++index) {
+        static_cast<ModeSegmentButton*>(modeButtons_[index])->setSelected(userMode == companionModes[index]);
+    }
+    updateThemeColors(true);
+}
+
+void TreatCard::showHintText(const QString& text)
+{
+    if (!text.isEmpty()) {
+        const bool wasShowing = footer_->currentWidget() == details_;
+        const auto metrics = details_->fontMetrics();
+        const int maxW = qMax(200, footer_->width() - 2);
+        details_->setText(metrics.elidedText(text, Qt::ElideRight, maxW));
         footer_->setCurrentWidget(details_);
         if (!wasShowing) {
             fade_->start();
         }
     } else {
         fade_->stop();
-        footer_->setCurrentWidget(status_);
+        footer_->setCurrentWidget(hint_);
     }
+}
+
+void TreatCard::changeEvent(QEvent* event)
+{
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange) {
+        updateThemeColors(false);
+    }
+    QWidget::changeEvent(event);
+}
+
+void TreatCard::showEvent(QShowEvent* event)
+{
+    updateThemeColors(false);
+    QWidget::showEvent(event);
 }
 
 void TreatCard::hideEvent(QHideEvent* event)
 {
-    showDetails(std::nullopt);
+    hoveredKey_.clear();
+    showHintText({});
     QWidget::hideEvent(event);
 }
 
@@ -376,14 +731,11 @@ void TreatCard::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    const QRectF card = QRectF(rect()).adjusted(5, 3, -5, -3);
+    const QRectF card = QRectF(rect()).adjusted(6, 2, -6, -2);
     const bool dark = darkPalette(*this);
-    QLinearGradient glaze(card.topLeft(), card.bottomRight());
-    glaze.setColorAt(0, dark ? QColor("#39312D") : QColor("#FFFCF5"));
-    glaze.setColorAt(1, dark ? QColor("#302A29") : QColor("#F7ECE3"));
-    painter.setBrush(glaze);
-    painter.setPen(QPen(dark ? QColor("#59483E") : QColor("#EBD9CB"), 1));
-    painter.drawRoundedRect(card, 13, 13);
+    painter.setBrush(dark ? QColor("#2C2E35") : QColor("#FFFFFF"));
+    painter.setPen(QPen(dark ? QColor(255, 255, 255, 22) : QColor(0, 0, 0, 18), 1.0));
+    painter.drawRoundedRect(card, 10, 10);
 }
 
 TreatEffect::TreatEffect(PetWindow& pet)

@@ -56,7 +56,8 @@ QJsonObject CompanionEvents::greeting(CompanionEvent event, const QDateTime& now
     return action;
 }
 
-QJsonObject CompanionEvents::nextReminder(const QDateTime& now, double activity, bool available)
+QJsonObject CompanionEvents::nextReminder(const QDateTime& now, double activity, bool available,
+                                          bool suppressLowActivity)
 {
     if (activity >= 30) {
         lowReminded_ = false;
@@ -66,11 +67,11 @@ QJsonObject CompanionEvents::nextReminder(const QDateTime& now, double activity,
         return {};
     }
     QJsonObject action;
-    if (activity <= 20 && !lowReminded_) {
+    if (!suppressLowActivity && activity <= 20 && !lowReminded_) {
         action = binding(CompanionEvent::LowActivity);
         lowReminded_ = !action.isEmpty();
     }
-    if (action.isEmpty() && !inactiveReminded_ && lastInteraction_.secsTo(now) >= 30 * 60) {
+    if (!suppressLowActivity && action.isEmpty() && !inactiveReminded_ && lastInteraction_.secsTo(now) >= 30 * 60) {
         action = binding(CompanionEvent::Inactive);
         inactiveReminded_ = !action.isEmpty();
     }

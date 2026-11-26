@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 StewardAndrecher
+Copyright (c) 2026 AuraPet Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+Note on Third-Party Components:
+Binary distributions bundle third-party libraries (including Qt 6 under LGPL-3.0,
+libavif/AOM/dav1d/libarchive, and optional Qwen3-TTS components under Apache-2.0/MIT).
+See distribution/第三方组件.md for full attribution and license compliance notices.

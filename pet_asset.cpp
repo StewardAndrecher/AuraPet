@@ -1,12 +1,20 @@
 #include "pet_asset.h"
 
 #include <QBuffer>
+#include <QCache>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QImage>
 #include <QImageReader>
+#include <QMutex>
 #include <QSaveFile>
 
 #include <avif/avif.h>
+
+#ifdef Q_OS_MACOS
+#include <CoreGraphics/CoreGraphics.h>
+#include <ImageIO/ImageIO.h>
+#endif
 
 #include <utility>
 
@@ -66,6 +74,68 @@ QImage decodeAvif(const avifROData& data, QString& error)
     return decoded;
 }
 
+#ifdef Q_OS_MACOS
+QImage decodeMacWebp(const QByteArray& bytes, QString& error)
+{
+    CFDataRef data = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault,
+        reinterpret_cast<const UInt8*>(bytes.constData()), bytes.size(), kCFAllocatorNull);
+    if (!data) {
+        error = QStringLiteral("无法读取 WebP 数据。");
+        return {};
+    }
+    CGImageSourceRef source = CGImageSourceCreateWithData(data, nullptr);
+    CFRelease(data);
+    if (!source) {
+        error = QStringLiteral("无法解析 WebP 图片。");
+        return {};
+    }
+    const size_t count = CGImageSourceGetCount(source);
+    if (count == 0) {
+        CFRelease(source);
+        error = QStringLiteral("WebP 图片不包含有效帧。");
+        return {};
+    }
+    if (count > 1) {
+        CFRelease(source);
+        error = QStringLiteral("目前支持静态 WebP。动画请使用 GIF。");
+        return {};
+    }
+    CGImageRef cgImage = CGImageSourceCreateImageAtIndex(source, 0, nullptr);
+    CFRelease(source);
+    if (!cgImage) {
+        error = QStringLiteral("无法解码 WebP 图像。");
+        return {};
+    }
+    const int width = static_cast<int>(CGImageGetWidth(cgImage));
+    const int height = static_cast<int>(CGImageGetHeight(cgImage));
+    if (!validSize(QSize(width, height))) {
+        CGImageRelease(cgImage);
+        error = QStringLiteral("无法读取素材尺寸，或图片宽高超过 4096 像素。");
+        return {};
+    }
+    QImage decoded(width, height, QImage::Format_RGBA8888_Premultiplied);
+    if (decoded.isNull()) {
+        CGImageRelease(cgImage);
+        error = QStringLiteral("无法为 WebP 分配像素缓冲区。");
+        return {};
+    }
+    decoded.fill(Qt::transparent);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(decoded.bits(), width, height, 8, decoded.bytesPerLine(),
+        colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(colorSpace);
+    if (!ctx) {
+        CGImageRelease(cgImage);
+        error = QStringLiteral("无法绘制 WebP 图像。");
+        return {};
+    }
+    CGContextDrawImage(ctx, CGRectMake(0, 0, width, height), cgImage);
+    CGContextRelease(ctx);
+    CGImageRelease(cgImage);
+    return decoded.convertToFormat(QImage::Format_RGBA8888);
+}
+#endif
+
 std::optional<QByteArray> readAssetFile(const QString& path, QString& error)
 {
     QFile file(path);
@@ -97,6 +167,13 @@ QImage readFrame(const QByteArray& bytes, bool allowGif, QByteArray& format, QSt
         return decodeAvif(avifData, error);
     }
 
+#ifdef Q_OS_MACOS
+    if (bytes.size() >= 12 && bytes.startsWith("RIFF") && bytes.mid(8, 4) == "WEBP") {
+        format = "webp";
+        return decodeMacWebp(bytes, error);
+    }
+#endif
+
     QBuffer input;
     input.setData(bytes);
     input.open(QIODevice::ReadOnly);
@@ -104,9 +181,9 @@ QImage readFrame(const QByteArray& bytes, bool allowGif, QByteArray& format, QSt
     reader.setDecideFormatFromContent(true);
     reader.setAutoTransform(true);
     format = reader.format();
-    if (format != "png" && format != "jpeg" && !(allowGif && format == "gif")) {
-        error = allowGif ? QStringLiteral("请选择可读取的 PNG、JPEG、GIF 或静态 AVIF。")
-                         : QStringLiteral("序列帧需要使用 PNG、JPEG 或静态 AVIF。");
+    if (format != "png" && format != "jpeg" && format != "webp" && !(allowGif && format == "gif")) {
+        error = allowGif ? QStringLiteral("请选择可读取的 PNG、JPEG、GIF、静态 WebP 或静态 AVIF。")
+                         : QStringLiteral("序列帧需要使用 PNG、JPEG、静态 WebP 或静态 AVIF。");
         return {};
     }
     if (!validSize(reader.size())) {
@@ -123,8 +200,14 @@ QImage readFrame(const QByteArray& bytes, bool allowGif, QByteArray& format, QSt
 
 std::optional<PetAsset> loadPetAsset(const QString& path, QString& error)
 {
+    auto prepared = loadPetPixels(path, error);
+    return prepared ? std::optional(makePlayableAsset(std::move(*prepared))) : std::nullopt;
+}
+
+std::optional<PreparedPetAsset> loadPetPixels(const QString& path, QString& error)
+{
     auto bytes = readAssetFile(path, error);
-    return bytes ? decodePetAsset(std::move(*bytes), error) : std::nullopt;
+    return bytes ? decodePetPixels(std::move(*bytes), error) : std::nullopt;
 }
 
 QImage loadPetSequenceFrame(const QString& path, QString& error)
@@ -136,21 +219,51 @@ QImage loadPetSequenceFrame(const QString& path, QString& error)
 
 std::optional<PetAsset> decodePetAsset(QByteArray bytes, QString& error)
 {
+    auto prepared = decodePetPixels(std::move(bytes), error);
+    return prepared ? std::optional(makePlayableAsset(std::move(*prepared))) : std::nullopt;
+}
+
+std::optional<PreparedPetAsset> decodePetPixels(QByteArray bytes, QString& error)
+{
+    if (bytes.isEmpty() || bytes.size() > maxPetAssetBytes) {
+        error = QStringLiteral("素材为空或超过 32 MiB。");
+        return std::nullopt;
+    }
+    struct Frame { QImage image; QByteArray format; };
+    static QMutex mutex;
+    static QCache<QByteArray, Frame> cache(64 * 1024 * 1024);
+    const auto key = QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+    {
+        QMutexLocker lock(&mutex);
+        if (const auto* cached = cache.object(key)) {
+            return PreparedPetAsset{std::move(bytes), cached->image, cached->format};
+        }
+    }
     QByteArray format;
-    const QPixmap frame = QPixmap::fromImage(readFrame(bytes, true, format, error));
+    auto frame = readFrame(bytes, true, format, error);
     if (frame.isNull()) {
         return std::nullopt;
     }
-    if (format == "gif") {
+    {
+        QMutexLocker lock(&mutex);
+        cache.insert(key, new Frame{frame, format}, frame.sizeInBytes());
+    }
+    return PreparedPetAsset{std::move(bytes), std::move(frame), std::move(format)};
+}
+
+PetAsset makePlayableAsset(PreparedPetAsset prepared)
+{
+    auto frame = QPixmap::fromImage(std::move(prepared.firstFrame));
+    if (prepared.format == "gif") {
         auto movie = std::make_unique<QMovie>();
         auto* playbackBuffer = new QBuffer(movie.get());
-        playbackBuffer->setData(bytes);
+        playbackBuffer->setData(prepared.source);
         playbackBuffer->open(QIODevice::ReadOnly);
         movie->setDevice(playbackBuffer);
         movie->setFormat("gif");
-        return PetAsset{std::move(bytes), frame, std::move(movie)};
+        return PetAsset{std::move(prepared.source), std::move(frame), std::move(movie)};
     }
-    return PetAsset{std::move(bytes), frame, nullptr};
+    return PetAsset{std::move(prepared.source), std::move(frame), nullptr};
 }
 
 std::optional<PetAsset> makePngPetAsset(const QImage& image, QString& error)

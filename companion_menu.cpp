@@ -5,6 +5,7 @@
 #include <QEvent>
 #include <QInputDialog>
 #include <QMenu>
+#include <QPointer>
 #include <QScreen>
 
 namespace {
@@ -52,9 +53,10 @@ QMenu* addCompanionMenu(QMenu& parent, QWidget& pet, FocusSession& focus)
         });
     }
     auto* custom = start->addAction(QStringLiteral("自定义时长…"));
-    QObject::connect(custom, &QAction::triggered, &focus, [&pet, &focus] {
+    const QPointer<QWidget> dialogAnchor(&pet);
+    QObject::connect(custom, &QAction::triggered, menu, [dialogAnchor, &focus] {
         bool confirmed = false;
-        const int minutes = QInputDialog::getInt(&pet, QStringLiteral("自定义专注时长"),
+        const int minutes = QInputDialog::getInt(dialogAnchor.data(), QStringLiteral("自定义专注时长"),
                                                 QStringLiteral("专注分钟数"), 25, 1, 180, 1, &confirmed);
         if (confirmed) {
             focus.start(std::chrono::minutes(minutes));
@@ -198,8 +200,10 @@ bool FocusNotice::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == &pet_ && isVisible()) {
         if (event->type() == QEvent::Hide) {
-            expiry_.stop();
-            hide();
+            if (!pet_.property("auraTransientHide").toBool()) {
+                expiry_.stop();
+                hide();
+            }
         } else if (event->type() == QEvent::Move || event->type() == QEvent::Resize) {
             placeBesidePet();
         }

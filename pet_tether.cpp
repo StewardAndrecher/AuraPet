@@ -322,9 +322,13 @@ PetTether::~PetTether() = default;
 void PetTether::cancel()
 {
     hold_.stop();
+    const bool wasAiming = (gesture_ == Gesture::Aiming);
     gesture_ = Gesture::None;
     view_->cancel();
     movement_.cancelTargeting();
+    if (wasAiming && aimingChanged) {
+        aimingChanged(false);
+    }
 }
 
 void PetTether::beginAim()
@@ -336,6 +340,9 @@ void PetTether::beginAim()
     gesture_ = Gesture::Aiming;
     if (aimingStarted) {
         aimingStarted();
+    }
+    if (aimingChanged) {
+        aimingChanged(true);
     }
     view_->start(pointer_);
 }
@@ -380,6 +387,9 @@ bool PetTether::eventFilter(QObject* watched, QEvent* event)
         const auto previous = gesture_;
         gesture_ = Gesture::None;
         if (previous == Gesture::Aiming) {
+            if (aimingChanged) {
+                aimingChanged(false);
+            }
             const QPointF landing = movement_.landingPoint(mouse->globalPosition());
             view_->finish(landing);
             movement_.moveTo(landing);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pet_motion_rules.h"
+
 #include <QElapsedTimer>
 #include <QIcon>
 #include <QTimer>
@@ -17,31 +19,52 @@ class PetWindow;
 enum class PetTreat { SlowKibble, HighKibble, YarnBall, Catnip };
 
 constexpr std::array petTreats{PetTreat::SlowKibble, PetTreat::HighKibble, PetTreat::YarnBall, PetTreat::Catnip};
+constexpr std::array companionModes{CompanionMode::Auto, CompanionMode::Play, CompanionMode::Daily, CompanionMode::Focus};
 constexpr int yarnActivityCost = 18;
 constexpr int catnipActivityGain = 24;
+
 QString treatName(PetTreat treat);
 QString treatDescription(PetTreat treat);
 QIcon treatIcon(PetTreat treat);
+QString companionModeName(CompanionMode mode);
+QString companionModeShortName(CompanionMode mode);
+QString companionModeDescription(CompanionMode mode);
+QString effectiveRhythmName(EffectiveRhythm rhythm);
 
 class TreatCard : public QWidget {
 public:
     TreatCard();
     void setLoaded(std::optional<PetTreat> treat);
+    void setCompanionState(CompanionMode userMode, EffectiveRhythm effectiveRhythm,
+                           const QString& overrideTag = {});
     std::function<void(PetTreat)> picked;
+    std::function<void(CompanionMode)> modeSelected;
 
 protected:
+    void changeEvent(QEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 
 private:
-    void showDetails(std::optional<PetTreat> treat);
+    void showHintText(const QString& text);
+    void updateThemeColors(bool force = false);
 
-    std::array<QWidget*, petTreats.size()> buttons_{};
-    QLabel* status_;
-    QLabel* details_;
-    QStackedWidget* footer_;
-    QPropertyAnimation* fade_;
-    std::optional<PetTreat> hovered_;
+    std::array<QWidget*, companionModes.size()> modeButtons_{};
+    QWidget* teaseButton_ = nullptr;
+    QWidget* rechargeButton_ = nullptr;
+    QLabel* title_ = nullptr;
+    QLabel* statusBadge_ = nullptr;
+    QLabel* hint_ = nullptr;
+    QLabel* details_ = nullptr;
+    QStackedWidget* footer_ = nullptr;
+    QPropertyAnimation* fade_ = nullptr;
+    CompanionMode userMode_ = CompanionMode::Auto;
+    EffectiveRhythm effectiveRhythm_ = EffectiveRhythm::Daily;
+    QString overrideTag_;
+    QString hoveredKey_;
+    bool themeInitialized_ = false;
+    bool lastDark_ = false;
 };
 
 class TreatEffect : public QWidget {

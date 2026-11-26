@@ -1,4 +1,5 @@
 #include "role_package.h"
+#include "random_speech.h"
 
 #include <QJsonDocument>
 #include <QSqlError>
@@ -36,7 +37,7 @@ bool RoleLibrary::initShareSchema(QString& error)
 {
     QSqlQuery query(database_);
     if (query.exec(QStringLiteral("CREATE TABLE IF NOT EXISTS role_share ("
-                                  "role_id TEXT PRIMARY KEY, card BLOB NOT NULL, behavior BLOB NOT NULL, voices BLOB NOT NULL, corpus BLOB NOT NULL)"))
+                                  "role_id TEXT PRIMARY KEY, card BLOB NOT NULL, behavior BLOB NOT NULL, voices BLOB NOT NULL, corpus BLOB NOT NULL, transcripts BLOB NOT NULL DEFAULT '{}')"))
         && query.exec(QStringLiteral("CREATE TABLE IF NOT EXISTS role_share_files ("
                                      "role_id TEXT NOT NULL, path TEXT NOT NULL, bytes BLOB NOT NULL, PRIMARY KEY(role_id,path))"))
         && query.exec(QStringLiteral("CREATE TABLE IF NOT EXISTS role_package_origin ("
@@ -45,10 +46,90 @@ bool RoleLibrary::initShareSchema(QString& error)
                                      "DELETE FROM role_share WHERE role_id=OLD.id; "
                                      "DELETE FROM role_share_files WHERE role_id=OLD.id; "
                                      "DELETE FROM role_package_origin WHERE role_id=OLD.id; END"))) {
-        return true;
+        if (query.exec(QStringLiteral("SELECT transcripts FROM role_share LIMIT 0"))
+            || query.exec(QStringLiteral("ALTER TABLE role_share ADD COLUMN transcripts BLOB NOT NULL DEFAULT '{}'"))
+            || query.exec(QStringLiteral("SELECT transcripts FROM role_share LIMIT 0"))) {
+            return true;
+        }
     }
     error = query.lastError().text();
     return false;
+}
+
+QStringList RoleLibrary::corpusPaths(const QString& id, QString& error) const
+{
+    if (!ready_) {
+        return {};
+    }
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral("SELECT path FROM role_share_files WHERE role_id=? AND path LIKE 'voice/corpus/%' ORDER BY path"));
+    query.addBindValue(id);
+    QStringList paths;
+    if (exec(query, error)) {
+        while (query.next()) {
+            paths.append(query.value(0).toString());
+        }
+    }
+    return paths;
+}
+
+QByteArray RoleLibrary::roleRecording(const QString& id, const QString& path, QString& error) const
+{
+    if (!ready_ || !isRandomSpeechRecording(path)) {
+        error = QStringLiteral("无法读取此角色的原声。");
+        return {};
+    }
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral("SELECT bytes FROM role_share_files WHERE role_id=? AND path=? "
+                                 "AND length(bytes) BETWEEN 45 AND 16777216"));
+    query.addBindValue(id);
+    query.addBindValue(path);
+    if (!exec(query, error)) {
+        return {};
+    }
+    if (!query.next()) {
+        error = QStringLiteral("这段原声已经移除，或无法读取。");
+        return {};
+    }
+    return query.value(0).toByteArray();
+}
+
+ShareFileStats RoleLibrary::shareFileStats(const QString& id, QString& error) const
+{
+    if (!ready_) {
+        return {};
+    }
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral(
+        "SELECT COALESCE(SUM(CASE WHEN path LIKE 'voice/corpus/%' THEN 1 ELSE 0 END), 0), "
+        "COALESCE(SUM(CASE WHEN path LIKE 'voice/corpus/%' THEN length(bytes) ELSE 0 END), 0), "
+        "COALESCE(SUM(CASE WHEN path NOT LIKE 'voice/corpus/%' THEN length(bytes) ELSE 0 END), 0) "
+        "FROM role_share_files WHERE role_id=?"));
+    query.addBindValue(id);
+    if (!exec(query, error) || !query.next()) {
+        return {};
+    }
+    return ShareFileStats{query.value(0).toInt(), query.value(1).toLongLong(), query.value(2).toLongLong()};
+}
+
+QMap<QString, QByteArray> RoleLibrary::shareFilesFor(const QString& id, bool includeCorpus, QString& error) const
+{
+    if (!ready_) {
+        return {};
+    }
+    QSqlQuery query(database_);
+    query.prepare(includeCorpus
+        ? QStringLiteral("SELECT path,bytes FROM role_share_files WHERE role_id=? ORDER BY path")
+        : QStringLiteral("SELECT path,bytes FROM role_share_files WHERE role_id=? AND path NOT LIKE 'voice/corpus/%' ORDER BY path"));
+    query.addBindValue(id);
+    QMap<QString, QByteArray> files;
+    if (!exec(query, error)) {
+        return {};
+    }
+    while (query.next()) {
+        files.insert(query.value(0).toString(), query.value(1).toByteArray());
+    }
+    return files;
 }
 
 RoleShare RoleLibrary::shareFor(const QString& id, QString& error, bool includeFiles) const
@@ -57,7 +138,7 @@ RoleShare RoleLibrary::shareFor(const QString& id, QString& error, bool includeF
         return {};
     }
     QSqlQuery query(database_);
-    query.prepare(QStringLiteral("SELECT card,behavior,voices,corpus FROM role_share WHERE role_id=?"));
+    query.prepare(QStringLiteral("SELECT card,behavior,voices,corpus,transcripts FROM role_share WHERE role_id=?"));
     query.addBindValue(id);
     if (!exec(query, error) || !query.next()) {
         return {};
@@ -65,7 +146,8 @@ RoleShare RoleLibrary::shareFor(const QString& id, QString& error, bool includeF
     RoleShare share{QJsonDocument::fromJson(query.value(0).toByteArray()).object(),
                     QJsonDocument::fromJson(query.value(1).toByteArray()).object(),
                     QJsonDocument::fromJson(query.value(2).toByteArray()).object(), {},
-                    QJsonDocument::fromJson(query.value(3).toByteArray()).object()};
+                    QJsonDocument::fromJson(query.value(3).toByteArray()).object(),
+                    QJsonDocument::fromJson(query.value(4).toByteArray()).object()};
     if (includeFiles) {
         query.prepare(QStringLiteral("SELECT path,bytes FROM role_share_files WHERE role_id=? ORDER BY path"));
         query.addBindValue(id);
@@ -81,12 +163,14 @@ RoleShare RoleLibrary::shareFor(const QString& id, QString& error, bool includeF
 
 bool RoleLibrary::writeShare(const QString& id, const RoleShare& share, QString& error)
 {
+    auto normalized = share;
+    removeChangedRandomRecordings(normalized);
     QSqlQuery query(database_);
-    query.prepare(QStringLiteral("INSERT INTO role_share(role_id,card,behavior,voices,corpus) "
-                                 "SELECT ?,?,?,?,? WHERE (? OR EXISTS(SELECT 1 FROM roles WHERE id=?)) "
-                                 "ON CONFLICT(role_id) DO UPDATE SET card=excluded.card,behavior=excluded.behavior,voices=excluded.voices,corpus=excluded.corpus"));
+    query.prepare(QStringLiteral("INSERT INTO role_share(role_id,card,behavior,voices,corpus,transcripts) "
+                                 "SELECT ?,?,?,?,?,? WHERE (? OR EXISTS(SELECT 1 FROM roles WHERE id=?)) "
+                                 "ON CONFLICT(role_id) DO UPDATE SET card=excluded.card,behavior=excluded.behavior,voices=excluded.voices,corpus=excluded.corpus,transcripts=excluded.transcripts"));
     query.addBindValue(id);
-    for (const auto& object : {share.card, share.behavior, share.voices, share.corpusNames}) {
+    for (const auto& object : {share.card, normalized.behavior, share.voices, share.corpusNames, share.corpusTexts}) {
         query.addBindValue(QJsonDocument(object).toJson(QJsonDocument::Compact));
     }
     query.addBindValue(id == builtInId());
@@ -126,6 +210,65 @@ bool RoleLibrary::saveShare(const QString& id, const RoleShare& share, QString& 
         return false;
     }
     return finish(database_, writeShare(id, share, error), error);
+}
+
+bool RoleLibrary::saveRoleCard(const QString& id, const QJsonObject& card, QString& error)
+{
+    if (!validateRoleCard(card, error)) {
+        return false;
+    }
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral("INSERT INTO role_share(role_id,card,behavior,voices,corpus,transcripts) "
+                                 "SELECT ?,?,'{}','{}','{}','{}' WHERE (? OR EXISTS(SELECT 1 FROM roles WHERE id=?)) "
+                                 "ON CONFLICT(role_id) DO UPDATE SET card=excluded.card"));
+    query.addBindValue(id);
+    query.addBindValue(QJsonDocument(card).toJson(QJsonDocument::Compact));
+    query.addBindValue(id == builtInId());
+    query.addBindValue(id);
+    if (!exec(query, error)) {
+        return false;
+    }
+    if (query.numRowsAffected() != 1) {
+        error = QStringLiteral("这个角色已经不在角色库里。");
+        return false;
+    }
+    return true;
+}
+
+bool RoleLibrary::saveRandomSpeech(const QString& id, const QJsonObject& config, QString& error)
+{
+    if (!ready_ || !validateRandomSpeech(config, error)) {
+        if (error.isEmpty()) {
+            error = QStringLiteral("角色库尚未打开。");
+        }
+        return false;
+    }
+    auto behavior = shareFor(id, error, false).behavior;
+    if (!error.isEmpty()) {
+        return false;
+    }
+    behavior.insert(QStringLiteral("randomSpeech"), config);
+    const auto bytes = QJsonDocument(behavior).toJson(QJsonDocument::Compact);
+    if (bytes.size() > 128 * 1024) {
+        error = QStringLiteral("角色的行为设置超过 128 KiB。");
+        return false;
+    }
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral("INSERT INTO role_share(role_id,card,behavior,voices,corpus,transcripts) "
+                                 "SELECT ?,'{}',?,'{}','{}','{}' WHERE (? OR EXISTS(SELECT 1 FROM roles WHERE id=?)) "
+                                 "ON CONFLICT(role_id) DO UPDATE SET behavior=excluded.behavior"));
+    query.addBindValue(id);
+    query.addBindValue(bytes);
+    query.addBindValue(id == builtInId());
+    query.addBindValue(id);
+    if (!exec(query, error)) {
+        return false;
+    }
+    if (query.numRowsAffected() != 1) {
+        error = QStringLiteral("这个角色已经不在角色库里。");
+        return false;
+    }
+    return true;
 }
 
 QString RoleLibrary::packageIdFor(const QString& id, QString& error) const

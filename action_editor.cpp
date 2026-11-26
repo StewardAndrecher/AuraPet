@@ -1,4 +1,5 @@
 #include "action_editor.h"
+#include "background_task.h"
 #include "role_actions.h"
 
 #ifdef Q_OS_MACOS
@@ -98,17 +99,25 @@ bool editRoleActions(RoleLibrary& library, const QString& roleId, const QString&
     QObject::connect(choose, &QPushButton::clicked, &dialog, [&] {
         const auto slot = selectedSlot();
         const auto path = QFileDialog::getOpenFileName(&dialog, QStringLiteral("选择动作素材"), {},
-            QStringLiteral("桌宠素材 (*.png *.jpg *.jpeg *.gif *.agif *.avif);;所有文件 (*)"));
+            QStringLiteral("桌宠素材 (*.png *.jpg *.jpeg *.gif *.agif *.webp *.avif);;所有文件 (*)"));
         if (path.isEmpty()) {
             return;
         }
-        QString error;
-        const auto asset = loadPetAsset(path, error);
-        if (!asset) {
-            QMessageBox::warning(&dialog, QStringLiteral("无法设置动作"), error);
+        using AssetLoad = QPair<std::optional<PreparedPetAsset>, QString>;
+        const auto loaded = waitForBackground<AssetLoad>(dialog, QStringLiteral("正在读取动作素材…"),
+            [path](QPromise<AssetLoad>&) {
+                AssetLoad res;
+                res.first = loadPetPixels(path, res.second);
+                return res;
+            });
+        if (!loaded) {
             return;
         }
-        saveAction(slot, {QFileInfo(path).fileName(), asset->source});
+        if (!loaded->first) {
+            QMessageBox::warning(&dialog, QStringLiteral("无法设置动作"), loaded->second);
+            return;
+        }
+        saveAction(slot, {QFileInfo(path).fileName(), loaded->first->source});
     });
 #ifdef Q_OS_MACOS
     QObject::connect(sequence, &QPushButton::clicked, &dialog, [&] {

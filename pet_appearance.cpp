@@ -144,12 +144,25 @@ std::optional<PetAppearance> analyzePetAppearance(const QImage& firstFrame, cons
         source.setData(gif);
         source.open(QIODevice::ReadOnly);
         QImageReader reader(&source, "gif");
+        const int totalFrames = reader.imageCount();
+        const int stride = totalFrames > 20 ? qMax(1, totalFrames / 20) : 1;
+        int index = 0;
         while (!canceled() && reader.canRead()) {
             const QImage frame = reader.read();
-            if (frame.size() != firstFrame.size() || !collect(frame, reader.nextImageDelay())) {
+            const int delay = reader.nextImageDelay();
+            if (frame.size() != firstFrame.size()) {
                 break;
             }
-            collected = true;
+            const bool shouldSample = (index == 0)
+                || (totalFrames > 0 && index == totalFrames - 1)
+                || (index % stride == 0);
+            if (shouldSample) {
+                if (!collect(frame, delay * stride)) {
+                    break;
+                }
+                collected = true;
+            }
+            ++index;
         }
     }
     if (!collected && !collect(firstFrame, 100)) {

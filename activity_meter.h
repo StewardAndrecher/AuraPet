@@ -19,6 +19,8 @@ public:
     ~ActivityMeter() override;
     void setAsset(const PetAsset& asset);
     void setActivity(double percent);
+    void setDisplayEnabled(bool enabled);
+    void setSuppressed(bool suppressed);
     void setRevealed(bool revealed);
     void flash(Feedback feedback);
 
@@ -33,10 +35,11 @@ private:
     void drawFeedback(QPainter& painter, QPointF tip);
 
     PetWindow& pet_;
-    QCache<QByteArray, PetAppearance> profiles_{16};
     QByteArray assetKey_;
     std::optional<PetAppearance> appearance_;
     QFutureWatcher<PetAppearance>* analysis_ = nullptr;
+    bool displayEnabled_ = true;
+    bool suppressed_ = false;
     bool revealed_ = false;
     int activity_ = 0;
     QVariantAnimation feedbackAnimation_;

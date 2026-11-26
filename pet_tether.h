@@ -19,6 +19,7 @@ public:
 
     std::function<void(QPoint)> menuRequested;
     std::function<void()> aimingStarted;
+    std::function<void(bool)> aimingChanged;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

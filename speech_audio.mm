@@ -8,6 +8,7 @@
 
 @interface GifPetSpeechDelegate : NSObject <AVSpeechSynthesizerDelegate>
 @property(nonatomic, strong) AVSpeechUtterance* utterance;
+@property(nonatomic) NSRange spokenRange;
 @end
 
 @implementation GifPetSpeechDelegate
@@ -25,6 +26,16 @@
     [self clearUtterance:utterance];
 }
 
+- (void)speechSynthesizer:(AVSpeechSynthesizer*)synthesizer willSpeakRangeOfSpeechString:(NSRange)characterRange
+                utterance:(AVSpeechUtterance*)utterance
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.utterance == utterance) {
+            self.spokenRange = characterRange;
+        }
+    });
+}
+
 - (void)speechSynthesizer:(AVSpeechSynthesizer*)synthesizer didCancelSpeechUtterance:(AVSpeechUtterance*)utterance
 {
     [self clearUtterance:utterance];
@@ -32,6 +43,39 @@
 @end
 
 namespace {
+class MacRecordingOutput : public RecordingOutput {
+public:
+    bool play(const QByteArray& bytes) override
+    {
+        reset();
+        if (bytes.isEmpty()) {
+            return false;
+        }
+        auto* data = [NSData dataWithBytes:bytes.constData() length:static_cast<NSUInteger>(bytes.size())];
+        NSError* error = nil;
+        player_ = [[AVAudioPlayer alloc] initWithData:data error:&error];
+        if (!player_ || ![player_ play]) {
+            reset();
+            return false;
+        }
+        return true;
+    }
+
+    bool active() const override { return player_.isPlaying; }
+    qreal progress() const override { return player_.duration > 0 ? player_.currentTime / player_.duration : 0; }
+
+    void reset() override
+    {
+        [player_ stop];
+        player_ = nil;
+    }
+
+    ~MacRecordingOutput() override { reset(); }
+
+private:
+    AVAudioPlayer* player_ = nil;
+};
+
 class MacPcmOutput : public PcmOutput {
 public:
     bool append(const QByteArray& samples) override
@@ -125,12 +169,22 @@ public:
         auto* utterance = [AVSpeechUtterance speechUtteranceWithString:text.toNSString()];
         utterance.voice = voice;
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate;
+        delegate_.spokenRange = NSMakeRange(NSNotFound, 0);
         delegate_.utterance = utterance;
         [synthesizer_ speakUtterance:utterance];
         return true;
     }
 
     bool active() const override { return delegate_.utterance != nil; }
+
+    std::optional<Range> spokenRange() const override
+    {
+        const auto range = delegate_.spokenRange;
+        if (!active() || range.location == NSNotFound || range.length == 0) {
+            return std::nullopt;
+        }
+        return Range{static_cast<qsizetype>(range.location), static_cast<qsizetype>(range.length)};
+    }
 
     void reset() override
     {
@@ -158,4 +212,9 @@ std::unique_ptr<PcmOutput> makePcmOutput()
 std::unique_ptr<SystemSpeechOutput> makeSystemSpeechOutput()
 {
     return std::make_unique<MacSystemSpeech>();
+}
+
+std::unique_ptr<RecordingOutput> makeRecordingOutput()
+{
+    return std::make_unique<MacRecordingOutput>();
 }

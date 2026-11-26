@@ -5,9 +5,12 @@
 #include <QCryptographicHash>
 #include <QEvent>
 #include <QFutureWatcher>
+#include <QMutex>
 #include <QPainter>
 #include <QPainterPath>
 #include <QScreen>
+#include <QThread>
+#include <QThreadPool>
 #include <QtConcurrentRun>
 
 #include <cmath>
@@ -18,6 +21,30 @@ constexpr int meterWidth = 13;
 constexpr int trackWidth = 5;
 constexpr int glowPadding = 7;
 constexpr int gap = 3;
+
+QMutex& profileCacheMutex()
+{
+    static QMutex mutex;
+    return mutex;
+}
+
+QCache<QByteArray, PetAppearance>& sharedProfiles()
+{
+    static QCache<QByteArray, PetAppearance> cache(64);
+    return cache;
+}
+
+QThreadPool* lowPriorityAppearancePool()
+{
+    static QThreadPool* pool = [] {
+        auto* instance = new QThreadPool;
+        instance->setMaxThreadCount(1);
+        instance->setThreadPriority(QThread::LowPriority);
+        instance->setExpiryTimeout(15000);
+        return instance;
+    }();
+    return pool;
+}
 }
 
 ActivityMeter::ActivityMeter(PetWindow& pet)
@@ -61,10 +88,13 @@ void ActivityMeter::setAsset(const PetAsset& asset)
         analysis_->deleteLater();
         analysis_ = nullptr;
     }
-    if (const auto* cached = profiles_.object(key)) {
-        appearance_ = *cached;
-        updateVisibility();
-        return;
+    {
+        QMutexLocker lock(&profileCacheMutex());
+        if (const auto* cached = sharedProfiles().object(key)) {
+            appearance_ = *cached;
+            updateVisibility();
+            return;
+        }
     }
     appearance_.reset();
     updateVisibility();
@@ -77,14 +107,17 @@ void ActivityMeter::setAsset(const PetAsset& asset)
         analysis_ = nullptr;
         if (!watcher->isCanceled() && watcher->future().resultCount() > 0) {
             appearance_ = watcher->result();
-            profiles_.insert(key, new PetAppearance(*appearance_));
+            {
+                QMutexLocker lock(&profileCacheMutex());
+                sharedProfiles().insert(key, new PetAppearance(*appearance_));
+            }
             updateVisibility();
         }
         watcher->deleteLater();
     });
     const QImage firstFrame = asset.firstFrame.toImage();
     const QByteArray gif = asset.movie ? asset.source : QByteArray{};
-    watcher->setFuture(QtConcurrent::run([firstFrame, gif](QPromise<PetAppearance>& promise) {
+    watcher->setFuture(QtConcurrent::run(lowPriorityAppearancePool(), [firstFrame, gif](QPromise<PetAppearance>& promise) {
         auto result = analyzePetAppearance(firstFrame, gif, [&promise] { return promise.isCanceled(); });
         if (result) {
             promise.addResult(std::move(*result));
@@ -102,6 +135,32 @@ void ActivityMeter::setActivity(double percent)
     }
 }
 
+void ActivityMeter::setDisplayEnabled(bool enabled)
+{
+    if (displayEnabled_ == enabled) {
+        return;
+    }
+    displayEnabled_ = enabled;
+    if (!displayEnabled_) {
+        feedbackAnimation_.stop();
+        feedbackProgress_ = 1;
+    }
+    updateVisibility();
+}
+
+void ActivityMeter::setSuppressed(bool suppressed)
+{
+    if (suppressed_ == suppressed) {
+        return;
+    }
+    suppressed_ = suppressed;
+    if (suppressed_) {
+        feedbackAnimation_.stop();
+        feedbackProgress_ = 1;
+    }
+    updateVisibility();
+}
+
 void ActivityMeter::setRevealed(bool revealed)
 {
     revealed_ = revealed;
@@ -110,7 +169,7 @@ void ActivityMeter::setRevealed(bool revealed)
 
 void ActivityMeter::flash(Feedback feedback)
 {
-    if (!pet_.isVisible()) {
+    if (!displayEnabled_ || suppressed_ || !pet_.isVisible()) {
         return;
     }
     feedbackStart_ = displayedActivity();
@@ -133,7 +192,9 @@ double ActivityMeter::displayedActivity() const
 
 void ActivityMeter::updateVisibility()
 {
-    if ((revealed_ || feedbackAnimation_.state() == QAbstractAnimation::Running) && pet_.isVisible() && appearance_) {
+    if (displayEnabled_ && !suppressed_
+        && (revealed_ || feedbackAnimation_.state() == QAbstractAnimation::Running)
+        && pet_.isVisible() && appearance_) {
         syncPosition();
         show();
         update();

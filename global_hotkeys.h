@@ -3,10 +3,13 @@
 #include <QObject>
 #include <QStringList>
 
+#ifdef Q_OS_MACOS
 #include <Carbon/Carbon.h>
+#endif
 
 #include <array>
 #include <functional>
+#include <memory>
 
 class GlobalHotkeys : public QObject {
 public:
@@ -17,6 +20,7 @@ public:
     static QString chord(Action action);
 
 private:
+#ifdef Q_OS_MACOS
     static OSStatus handle(EventHandlerCallRef, EventRef event, void* context);
     void clear();
 
@@ -24,4 +28,8 @@ private:
     EventHandlerRef handler_ = nullptr;
     std::array<EventHotKeyRef, 3> keys_{};
     std::array<bool, 3> pressed_{};
+#else
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+#endif
 };

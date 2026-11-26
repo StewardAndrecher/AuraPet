@@ -29,6 +29,13 @@ struct RoleShare {
     QJsonObject voices;
     QMap<QString, QByteArray> files;
     QJsonObject corpusNames;
+    QJsonObject corpusTexts;
+};
+
+struct ShareFileStats {
+    int corpusCount = 0;
+    qint64 corpusBytes = 0;
+    qint64 otherBytes = 0;
 };
 
 struct RolePackage;
@@ -72,17 +79,28 @@ public:
     static QString builtInName();
     static QString legacyId();
     bool open(const QString& databasePath, QString& error);
+    QString databasePath() const { return database_.databaseName(); }
+    bool backupTo(const QString& file, QString& error) const;
+    static bool backupDatabaseFile(const QString& sourceDatabasePath, const QString& destinationFile, QString& error);
+    static bool restoreBackup(const QString& file, const QString& databasePath, QString& error);
     bool available() const;
     bool migrateLegacy(const QString& assetPath, QString& error);
     QList<RoleEntry> entries(QString& error) const;
     QByteArray assetFor(const QString& id, QString& error) const;
     QString add(const QString& name, const QByteArray& asset, QString& error);
+    QString duplicate(const QString& sourceId, const QString& builtInAsset, QString& error);
     bool rename(const QString& id, const QString& name, QString& error);
     bool remove(const QString& id, QString& error);
     std::optional<ActionAsset> actionFor(const QString& id, ActionSlot slot, QString& error) const;
     bool saveAction(const QString& id, ActionSlot slot, const ActionAsset& asset, QString& error);
     bool removeAction(const QString& id, ActionSlot slot, QString& error);
+    QStringList corpusPaths(const QString& id, QString& error) const;
+    QByteArray roleRecording(const QString& id, const QString& path, QString& error) const;
+    ShareFileStats shareFileStats(const QString& id, QString& error) const;
+    QMap<QString, QByteArray> shareFilesFor(const QString& id, bool includeCorpus, QString& error) const;
     RoleShare shareFor(const QString& id, QString& error, bool includeFiles = true) const;
+    bool saveRoleCard(const QString& id, const QJsonObject& card, QString& error);
+    bool saveRandomSpeech(const QString& id, const QJsonObject& config, QString& error);
     bool saveShare(const QString& id, const RoleShare& share, QString& error);
     QString matchingPackage(const QString& packageId, QString& error) const;
     QString importPackage(const RolePackage& package, const QString& replace, QString& error);
@@ -91,6 +109,7 @@ public:
                                   qint64 after = 0, bool includeProactive = true) const;
     bool saveExchange(const QString& id, const QString& user, const QString& assistant, QString& error);
     bool saveProactiveSpeech(const QString& id, const QString& text, QString& error);
+    bool clearConversation(const QString& id, QString& error);
     qint64 summarizedThrough(const QString& id, QString& error) const;
     std::optional<SummaryBatch> summaryBatch(const QString& id, bool manual, QString& error) const;
     bool saveSummary(const QString& id, const SummaryBatch& batch, const QString& text,
@@ -102,6 +121,7 @@ public:
 
 private:
     bool initProactiveSpeech(QString& error);
+    bool migrateSchema(QString& error);
     bool insertChatMessage(const QString& id, const QString& speaker, const QString& text,
                            bool proactive, QString& error);
     bool initMemorySchema(QString& error);

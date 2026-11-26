@@ -95,6 +95,10 @@ double PetMotionRules::range(double low, double high)
 void PetMotionRules::resumeAt(QPointF position, double idleSeconds)
 {
     position_ = lastTravelPoint_ = position;
+    if (!hasAnchor_) {
+        anchor_ = position;
+        hasAnchor_ = true;
+    }
     velocity_ = {};
     previousCursor_.reset();
     mouseVelocity_ = {};
@@ -113,6 +117,8 @@ void PetMotionRules::interacted(bool dragged)
     curiosity_ = qMin(1.0, curiosity_ + 0.4);
     restAt_ = now_ + range(24, 42);
     if (dragged) {
+        anchor_ = position_;
+        hasAnchor_ = true;
         dragUntil_ = now_ + 3;
     }
 }
@@ -120,6 +126,8 @@ void PetMotionRules::interacted(bool dragged)
 void PetMotionRules::setDestination(QPointF position, QPointF destination)
 {
     position_ = position;
+    anchor_ = destination;
+    hasAnchor_ = true;
     velocity_ = {};
     destination_ = destination;
 }
@@ -131,12 +139,45 @@ void PetMotionRules::cancelDestination()
 
 void PetMotionRules::recoverActivity(double seconds)
 {
-    adjustActivity(qBound(0.0, seconds, .05) * activityRates_.recovery);
+    adjustActivity(qBound(0.0, seconds, .30) * profile_.recovery);
 }
 
 void PetMotionRules::setKibble(Kibble kibble)
 {
-    activityRates_ = kibbleRates(kibble);
+    switch (kibble) {
+    case Kibble::High: setRhythm(EffectiveRhythm::Play); break;
+    case Kibble::Slow: setRhythm(EffectiveRhythm::Focus); break;
+    case Kibble::None: setRhythm(EffectiveRhythm::Daily); break;
+    }
+}
+
+void PetMotionRules::setRhythm(EffectiveRhythm rhythm)
+{
+    if (rhythm_ == rhythm) {
+        return;
+    }
+    rhythm_ = rhythm;
+    profile_ = rhythmProfile(rhythm);
+    if (profile_.anchorRadius > 0) {
+        anchor_ = position_;
+        hasAnchor_ = true;
+        if (!resting(state_)) {
+            state_ = MotionState::Idle;
+            velocity_ = {};
+            until_ = decideAt_ = now_ + range(profile_.idleMin * 0.5, profile_.idleMax * 0.6);
+        }
+    }
+}
+
+void PetMotionRules::setAnchor(QPointF anchor)
+{
+    anchor_ = anchor;
+    hasAnchor_ = true;
+}
+
+void PetMotionRules::setActivity(double value)
+{
+    activity_ = qBound(0.0, value, 100.0);
 }
 
 double PetMotionRules::adjustActivity(double change)
@@ -151,11 +192,15 @@ void PetMotionRules::sampleCursor(const MotionSpace& space, double dt)
     if (space.cursor && previousCursor_) {
         const auto instantaneous = limit((*space.cursor - *previousCursor_) / dt, 1400);
         mouseVelocity_ += (instantaneous - mouseVelocity_) * (1 - std::exp(-dt / 0.10));
-        const auto towardPet = unit(position_ + centerOffset(space) - *space.cursor);
-        const double approaching = QPointF::dotProduct(mouseVelocity_, towardPet);
-        const double clearance = pointerClearance(space, position_);
-        if (clearance >= 24 && clearance < 115 && approaching > 310) {
-            startledUntil_ = now_ + 0.85;
+        if (profile_.allowFlee) {
+            const auto towardPet = unit(position_ + centerOffset(space) - *space.cursor);
+            const double approaching = QPointF::dotProduct(mouseVelocity_, towardPet);
+            const double clearance = pointerClearance(space, position_);
+            if (clearance >= 24 && clearance < 115 && approaching > 310) {
+                startledUntil_ = now_ + 0.85;
+            }
+        } else {
+            startledUntil_ = 0;
         }
     } else {
         mouseVelocity_ = {};
@@ -166,13 +211,22 @@ void PetMotionRules::sampleCursor(const MotionSpace& space, double dt)
 
 QPointF PetMotionRules::explorationTarget(const QRectF& bounds, bool wide)
 {
-    const QRectF safe = inset(bounds, 32);
+    QRectF safe = inset(bounds, 32);
+    if (profile_.anchorRadius > 0 && hasAnchor_) {
+        const double r = profile_.anchorRadius;
+        const QRectF anchorBox(anchor_.x() - r, anchor_.y() - r, r * 2.0, r * 2.0);
+        const QRectF clamped = safe.intersected(anchorBox);
+        if (clamped.width() >= 12.0 && clamped.height() >= 12.0) {
+            safe = clamped;
+        }
+    }
     const auto previous = target_;
     QPointF best = safe.center();
     double bestScore = -1e9;
     for (int i = 0; i < 14; ++i) {
         const double angle = range(0, 2 * pi);
-        const double distance = wide ? range(280, 580) : range(80, 360);
+        const double distance = wide ? range(280, 580)
+                                     : range(profile_.exploreMinDist, profile_.exploreMaxDist);
         const auto candidate = inBounds(position_ + QPointF(std::cos(angle), std::sin(angle)) * distance, safe);
         const double traveled = length(candidate - position_);
         const double score = -std::abs(traveled - distance) + qMin(110.0, length(candidate - previous)) * 0.45;
@@ -206,21 +260,27 @@ void PetMotionRules::enter(MotionState next, const MotionSpace& space)
     }
     state_ = next;
     switch (state_) {
-    case MotionState::Idle: until_ = now_ + range(1, 3.4); break;
-    case MotionState::Observe: until_ = now_ + range(0.8, 1.5); break;
+    case MotionState::Idle:
+        until_ = now_ + range(profile_.idleMin, profile_.idleMax);
+        break;
+    case MotionState::Observe:
+        until_ = now_ + range(0.8, 1.5 + (rhythm_ == EffectiveRhythm::Focus ? 2.5 : 0.0));
+        break;
     case MotionState::Rest:
-        until_ = now_ + range(2, 4);
+        until_ = now_ + range(profile_.restMin, profile_.restMax);
         restAt_ = now_ + range(24, 42);
         break;
     case MotionState::Wander:
-        until_ = now_ + range(2, 6);
+        until_ = now_ + range(rhythm_ == EffectiveRhythm::Focus ? 1.4 : 2.0,
+                              rhythm_ == EffectiveRhythm::Focus ? 3.2 : 5.8);
         turnAt_ = now_ + range(0.3, 0.8);
-        wanderSpeed_ = range(38, 96);
+        wanderSpeed_ = range(38, 92) * profile_.speedScale;
         wanderAngle_ = length(velocity_) > 15 ? std::atan2(velocity_.y(), velocity_.x()) : range(-pi, pi);
         break;
     case MotionState::Explore: {
-        until_ = now_ + range(4, 8);
-        const bool wide = now_ >= wideAt_ && random_.generateDouble() < .30;
+        until_ = now_ + range(rhythm_ == EffectiveRhythm::Focus ? 2.4 : 3.8,
+                              rhythm_ == EffectiveRhythm::Focus ? 4.8 : 7.6);
+        const bool wide = profile_.wideChance > 0 && now_ >= wideAt_ && random_.generateDouble() < profile_.wideChance;
         if (wide) {
             wideAt_ = now_ + range(30, 60);
         }
@@ -250,7 +310,7 @@ void PetMotionRules::decide(const MotionSpace& space)
     decideAt_ = now_ + range(.55, 1.2);
     const double clearance = pointerClearance(space, position_);
     const double distance = space.cursor ? length(*space.cursor - position_ - centerOffset(space)) : 1e6;
-    const bool flee = space.cursor && clearance >= 24 && clearance < 115
+    const bool flee = profile_.allowFlee && space.cursor && clearance >= 24 && clearance < 115
         && (now_ < startledUntil_ || (now_ < dragUntil_ && length(mouseVelocity_) > 180));
     if (flee && state_ != MotionState::Rest && state_ != MotionState::Observe && state_ != MotionState::Flee
         && now_ >= cooldown_[static_cast<int>(MotionState::Flee)]) {
@@ -268,23 +328,25 @@ void PetMotionRules::decide(const MotionSpace& space)
         enter(MotionState::Rest, space);
         return;
     }
-    if (now_ - lastTravel_ >= 14 && resting(state_)) {
-        enter(MotionState::Wander, space);
+    if (now_ - lastTravel_ >= profile_.maxStillSeconds && resting(state_)) {
+        enter(profile_.anchorRadius > 0 ? MotionState::Explore : MotionState::Wander, space);
         return;
     }
 
-    const double activity = activity_ / 100;
-    const bool nearEdge = edgeDistance(position_, space.bounds) < 90;
-    const bool follow = distance >= followDistance(space) + 26 && distance <= followDistance(space) + 190
+    const double activity = activity_ / 100.0;
+    const bool nearEdge = profile_.allowEdgePlay && edgeDistance(position_, space.bounds) < 90;
+    const bool follow = profile_.allowFollow && distance >= followDistance(space) + 26
+        && distance <= followDistance(space) + 190
         && clearance >= 34 && length(mouseVelocity_) < 115;
+    const double bias = profile_.moveWeightBias;
     struct Choice { MotionState state; double score; };
     std::array<Choice, 6> choices{{
-        {MotionState::Idle, 1.70},
-        {MotionState::Wander, .68 + activity * .95},
-        {MotionState::Explore, .30 + activity * .80 + curiosity_ * .85 + range(0, .22)},
-        {MotionState::Follow, follow ? .62 + curiosity_ * .65 + range(0, .65) : -100.0},
-        {MotionState::Rest, 1.25 - activity * 1.40},
-        {MotionState::EdgePlay, nearEdge ? .23 + activity * .75 + range(0, .45) : -100.0},
+        {MotionState::Idle, 1.70 - bias * 0.65},
+        {MotionState::Wander, .68 + activity * .95 + bias},
+        {MotionState::Explore, .30 + activity * .80 + curiosity_ * .85 + bias * 0.9 + range(0, .22)},
+        {MotionState::Follow, follow ? .62 + curiosity_ * .65 + bias * 0.5 + range(0, .65) : -100.0},
+        {MotionState::Rest, 1.25 - activity * 1.40 - bias * 0.8},
+        {MotionState::EdgePlay, nearEdge ? .23 + activity * .75 + bias * 0.6 + range(0, .45) : -100.0},
     }};
     for (auto& choice : choices) {
         if (choice.state == state_) {
@@ -304,6 +366,9 @@ void PetMotionRules::decide(const MotionSpace& space)
 QPointF PetMotionRules::desiredVelocity(const MotionSpace& space)
 {
     const double scale = movementScale(space);
+    // Activity naturally modulates briskness (0.78x at low energy -> 1.12x at full energy)
+    const double energyFactor = 0.78 + 0.34 * (activity_ / 100.0);
+    const double pace = scale * profile_.speedScale * energyFactor;
     switch (state_) {
     case MotionState::Wander: {
         if (now_ >= turnAt_) {
@@ -311,12 +376,18 @@ QPointF PetMotionRules::desiredVelocity(const MotionSpace& space)
             turnAt_ = now_ + range(.3, .8);
         }
         const QPointF direction(std::cos(wanderAngle_), std::sin(wanderAngle_));
-        const QPointF push = inBounds(position_, inset(space.bounds, 42)) - position_;
+        QPointF push = inBounds(position_, inset(space.bounds, 42)) - position_;
+        if (profile_.anchorRadius > 0 && hasAnchor_) {
+            const QPointF toAnchor = anchor_ - position_;
+            if (length(toAnchor) > profile_.anchorRadius * 0.80) {
+                push += toAnchor * 0.9;
+            }
+        }
         const auto steered = unit(direction + push / 31.0);
-        return steered * (wanderSpeed_ * scale * (1 + .17 * std::sin(now_ * 2.1)));
+        return steered * (wanderSpeed_ * scale * energyFactor * (1 + .17 * std::sin(now_ * 2.1)));
     }
-    case MotionState::Explore: return arrive(target_ - position_, 126 * scale, 22);
-    case MotionState::EdgePlay: return arrive(target_ - position_, 115 * scale, 16);
+    case MotionState::Explore: return arrive(target_ - position_, 122 * pace, 22);
+    case MotionState::EdgePlay: return arrive(target_ - position_, 112 * pace, 16);
     case MotionState::Flee: return arrive(target_ - position_, 148 * scale, 16);
     case MotionState::Follow: {
         if (!space.cursor) {
@@ -333,7 +404,7 @@ QPointF PetMotionRules::desiredVelocity(const MotionSpace& space)
         if (length(offsetTarget - target_) > 20) {
             target_ = offsetTarget;
         }
-        return arrive(target_ - position_, 87 * scale, 20);
+        return arrive(target_ - position_, 87 * pace, 20);
     }
     default: return {};
     }
@@ -365,7 +436,7 @@ void PetMotionRules::advanceToDestination(const MotionSpace& space, double dt)
     const double steeringLag = deceleration * .30;
     const double brakingSpeed = std::sqrt(steeringLag * steeringLag + 2 * deceleration * distance) - steeringLag;
     steer(direction * qMin(speed, brakingSpeed), acceleration, dt);
-    adjustActivity(-dt * activityRates_.consumption);
+    adjustActivity(-dt * profile_.consumption);
 
     const auto step = velocity_ * dt;
     if (QPointF::dotProduct(step, direction) >= distance) {
@@ -391,14 +462,14 @@ void PetMotionRules::advance(double seconds, const MotionSpace& space)
     }
     sampleCursor(space, dt);
     const bool still = resting(state_);
-    adjustActivity(dt * (still ? activityRates_.recovery : -activityRates_.consumption));
+    adjustActivity(dt * (still ? profile_.recovery : -profile_.consumption));
     curiosity_ = qMax(0.0, curiosity_ - .035 * dt);
 
     const double clearance = pointerClearance(space, position_);
     if (!still && clearance < 22) {
         enter(MotionState::Observe, space);
         velocity_ = {};
-    } else if (!still && (movingFor_ >= 7.3 || activity_ < 14)) {
+    } else if (!still && (movingFor_ >= (rhythm_ == EffectiveRhythm::Focus ? 4.2 : 7.3) || activity_ < 14)) {
         enter(MotionState::Observe, space);
     } else if ((!still && now_ >= until_)
         || ((state_ == MotionState::Explore || state_ == MotionState::EdgePlay || state_ == MotionState::Flee)

@@ -20,11 +20,17 @@ public:
     void setSuspended(bool suspended);
     void setQuietMode(bool quiet);
     void setKibble(Kibble kibble);
+    void setRhythm(EffectiveRhythm rhythm);
+    EffectiveRhythm rhythm() const { return rules_.rhythm(); }
+    void setAnchor(const QPoint& anchor);
+    void setActivity(double value);
     double adjustActivity(double change);
     double activity() const { return rules_.activity(); }
     void postpone();
     void beginTargeting();
     void cancelTargeting();
+    void setSpaceTransitActive(bool active);
+    void finishSpaceTransit(const QPoint& landedPos, double idlePauseSeconds = 2.4);
     QPointF landingPoint(const QPointF& requested) const;
     void moveTo(const QPointF& landing);
 
@@ -50,4 +56,5 @@ private:
     bool mouseHeld_ = false;
     bool blocked_ = false;
     bool targeting_ = false;
+    bool spaceTransit_ = false;
 };

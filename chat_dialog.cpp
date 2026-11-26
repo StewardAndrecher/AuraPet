@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollBar>
@@ -26,14 +27,23 @@ void configureChat(QSettings& settings, QWidget* parent)
 {
     QDialog dialog(parent);
     dialog.setWindowTitle(QStringLiteral("AI 接口"));
-    dialog.resize(460, 190);
+    dialog.resize(540, 290);
     auto* form = new QFormLayout(&dialog);
     auto* base = new QLineEdit(settings.value(baseUrlSetting).toString(), &dialog);
+    base->setObjectName(QStringLiteral("chatBaseUrl"));
     base->setPlaceholderText(QStringLiteral("https://你的服务地址/v1"));
     auto* model = new QLineEdit(settings.value(modelSetting).toString(), &dialog);
+    model->setObjectName(QStringLiteral("chatModelId"));
     auto* secret = new QLineEdit(&dialog);
+    secret->setObjectName(QStringLiteral("chatApiKey"));
     secret->setEchoMode(QLineEdit::Password);
     auto* removeKey = new QCheckBox(QStringLiteral("移除已保存的 API Key"), &dialog);
+    auto* disclosure = new QLabel(QStringLiteral(
+        "服务会收到当前消息和角色设定。常规聊天还会发送近期历史和相关记忆。"
+        "开启自动整理时，服务也会收到需要整理的旧对话。新保存的 API Key 存于本机当前账户的私有文件。"), &dialog);
+    disclosure->setWordWrap(true);
+    auto* privateChat = new QCheckBox(QStringLiteral("无痕聊天 · 不保存新对话，也不附带历史和记忆"), &dialog);
+    privateChat->setChecked(settings.value(privateChatSetting, false).toBool());
     auto* status = new QLabel(&dialog);
     status->setWordWrap(true);
     status->setTextFormat(Qt::PlainText);
@@ -42,24 +52,31 @@ void configureChat(QSettings& settings, QWidget* parent)
     form->addRow(QStringLiteral("模型 ID"), model);
     form->addRow(QStringLiteral("API Key（选填）"), secret);
     form->addRow(removeKey);
+    form->addRow(disclosure);
+    form->addRow(privateChat);
     form->addRow(status);
     form->addRow(buttons);
 
     const auto initialEndpoint = chatEndpoint(base->text());
+    const auto accepted = settings.value(consentEndpointSetting).toString();
     auto loadedEndpoint = initialEndpoint;
     const auto showKeyPlaceholder = [&] {
         const bool hasSavedKey = loadedEndpoint == initialEndpoint && settings.value(usesKeySetting).toBool();
         removeKey->setChecked(false);
         removeKey->setVisible(hasSavedKey);
-        secret->setPlaceholderText(hasSavedKey ? QStringLiteral("已保存，留空继续使用")
-                                               : QStringLiteral("使用本地无鉴权接口时可留空"));
+        if (!hasSavedKey) {
+            secret->setPlaceholderText(QStringLiteral("使用本地无鉴权接口时可留空"));
+        } else if (settings.value(localKeySetting).toBool()) {
+            secret->setPlaceholderText(QStringLiteral("已保存，留空继续使用"));
+        } else {
+            secret->setPlaceholderText(QStringLiteral("旧版钥匙串密钥，可重新输入以保存到本机账户"));
+        }
     };
     showKeyPlaceholder();
     QObject::connect(base, &QLineEdit::textChanged, &dialog, [&] {
         const auto endpoint = chatEndpoint(base->text());
         if (loadedEndpoint != endpoint) {
             loadedEndpoint = endpoint;
-            secret->clear();
             showKeyPlaceholder();
         }
     });
@@ -68,19 +85,34 @@ void configureChat(QSettings& settings, QWidget* parent)
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         const auto endpoint = chatEndpoint(base->text());
         if (endpoint.isEmpty() || model->text().trimmed().isEmpty()) {
-            status->setText(QStringLiteral("请填写有效的 HTTP(S) Base URL 和模型 ID。"));
+            status->setText(QStringLiteral("请填写有效的地址和模型 ID。远程地址需要 HTTPS，本机可用 HTTP。"));
             return;
         }
+        const auto address = endpoint.toString(QUrl::FullyEncoded);
         const QString key = removeKey->isChecked() ? QString{} : secret->text().trimmed();
+        if (accepted != address || !key.isEmpty()) {
+            auto message = QStringLiteral("保存后，AuraPet 将按上方说明向以下地址发送数据：\n%1").arg(address);
+            if (!key.isEmpty()) {
+                message += QStringLiteral("\n\n密钥将保存在当前系统账户的私有文件中，供后续聊天和自动整理使用。");
+            }
+            if (QMessageBox::question(&dialog, QStringLiteral("确认保存 AI 接口"), message,
+                                     QMessageBox::Save | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Save) {
+                return;
+            }
+        }
         QString error;
-        if ((!key.isEmpty() || removeKey->isChecked()) && !saveChatKey(endpoint.toString(QUrl::FullyEncoded), key, error)) {
+        const bool hadLocalKey = initialEndpoint == endpoint && settings.value(localKeySetting).toBool();
+        if ((!key.isEmpty() || (removeKey->isChecked() && hadLocalKey)) && !saveChatKey(address, key, error)) {
             status->setText(error);
             return;
         }
         settings.setValue(usesKeySetting, !removeKey->isChecked() &&
                           (!key.isEmpty() || (initialEndpoint == endpoint && settings.value(usesKeySetting).toBool())));
+        settings.setValue(localKeySetting, !removeKey->isChecked() && (!key.isEmpty() || hadLocalKey));
         settings.setValue(baseUrlSetting, base->text().trimmed());
         settings.setValue(modelSetting, model->text().trimmed());
+        settings.setValue(consentEndpointSetting, address);
+        settings.setValue(privateChatSetting, privateChat->isChecked());
         settings.sync();
         dialog.accept();
     });
@@ -94,7 +126,7 @@ void showRoleChatHistory(ChatSession& chat, RoleLibrary& library, QSettings& set
     const QString roleName = chat.roleName();
     QDialog dialog(parent);
     dialog.setWindowTitle(QStringLiteral("%1 · 聊天记录").arg(roleName));
-    dialog.resize(530, 485);
+    dialog.resize(605, 485);
     auto* layout = new QVBoxLayout(&dialog);
     auto* transcript = new QPlainTextEdit(&dialog);
     transcript->setReadOnly(true);
@@ -110,12 +142,14 @@ void showRoleChatHistory(ChatSession& chat, RoleLibrary& library, QSettings& set
     auto* configure = new QPushButton(QStringLiteral("AI 接口…"), &dialog);
     auto* memory = new QPushButton(QStringLiteral("记忆…"), &dialog);
     auto* automatic = new QCheckBox(QStringLiteral("自动整理"), &dialog);
-    automatic->setChecked(settings.value(automaticSummarySetting, true).toBool());
+    automatic->setChecked(settings.value(automaticSummarySetting, false).toBool());
+    auto* erase = new QPushButton(QStringLiteral("清除本地记录…"), &dialog);
     auto* close = new QPushButton(QStringLiteral("关闭"), &dialog);
     nav->addWidget(earlier);
     nav->addStretch();
     nav->addWidget(configure);
     nav->addWidget(memory);
+    nav->addWidget(erase);
     nav->addWidget(automatic);
     nav->addWidget(close);
     layout->addWidget(transcript, 1);
@@ -164,12 +198,24 @@ void showRoleChatHistory(ChatSession& chat, RoleLibrary& library, QSettings& set
     });
     QObject::connect(configure, &QPushButton::clicked, &dialog, [&] {
         configureChat(settings, &dialog);
+        automatic->setEnabled(!settings.value(privateChatSetting, false).toBool());
         render(true);
         chat.organize(false);
     });
     QObject::connect(memory, &QPushButton::clicked, &dialog, [&] {
         if (showRoleMemory(library, roleId, roleName, &dialog)) {
             chat.organize(true);
+        }
+    });
+    QObject::connect(erase, &QPushButton::clicked, &dialog, [&] {
+        if (QMessageBox::question(&dialog, QStringLiteral("清除这个角色的对话？"),
+            QStringLiteral("将删除此角色的本地聊天记录、摘要和记忆。原有备份以及 AI 服务商保存的数据需分别管理。"),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+            return;
+        }
+        QString error;
+        if (!chat.clearHistory(error)) {
+            QMessageBox::warning(&dialog, QStringLiteral("清除失败"), error);
         }
     });
     QObject::connect(automatic, &QCheckBox::toggled, &dialog, [&](bool enabled) {
@@ -185,5 +231,6 @@ void showRoleChatHistory(ChatSession& chat, RoleLibrary& library, QSettings& set
     QTimer::singleShot(0, &dialog, [&] { chat.organize(false); });
     render(false);
     updateSummary(chat.summaryStatus());
+    automatic->setEnabled(!settings.value(privateChatSetting, false).toBool());
     dialog.exec();
 }

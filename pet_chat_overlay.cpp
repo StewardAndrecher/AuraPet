@@ -15,6 +15,7 @@
 #include <QScreen>
 #include <QTextDocument>
 #include <QTextLayout>
+#include <QToolTip>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <utility>
@@ -102,7 +103,7 @@ PetChatOverlay::PetChatOverlay(QWidget& pet, ChatSession& chat, SpeechPlayback* 
     summaryClock_.setInterval(60000);
     connect(&summaryClock_, &QTimer::timeout, this, [this] { chat_.organize(false); });
     connect(qApp, &QApplication::focusChanged, this, [this](QWidget* previous, QWidget* current) {
-        if (current == input_ && inputOpen_) {
+        if (current == input_ && interaction_.inputVisible()) {
             summaryClock_.start();
             chat_.organize(false);
         } else if (previous == input_) {
@@ -118,10 +119,14 @@ PetChatOverlay::PetChatOverlay(QWidget& pet, ChatSession& chat, SpeechPlayback* 
     });
     if (voice_) {
         connect(voice_, &SpeechPlayback::captionChanged, this, [this](const QString& text) {
-            showSpeech(text, !voice_->textFinished(), voice_->fullText());
+            showSpeech(text, !voice_->textFinished());
         });
         connect(voice_, &SpeechPlayback::ended, this, [this] {
-            scheduleSpeechHide();
+            if (interaction_.bubbleVisible() && bubble_->isHidden()) {
+                hideSpeech();
+            } else {
+                scheduleSpeechHide();
+            }
             QTimer::singleShot(0, this, &PetChatOverlay::playQueuedSpeech);
         });
     }
@@ -131,6 +136,10 @@ PetChatOverlay::PetChatOverlay(QWidget& pet, ChatSession& chat, SpeechPlayback* 
         hideBubble_.stop();
         streamRefresh_.stop();
         pendingSpeech_.clear();
+        fullSpeech_.clear();
+        speechWindowStart_ = 0;
+        speechContinuationPrefix_ = false;
+        hideSpeech();
         bubble_->beginReply();
         if (voice_) {
             if (pet_.isVisible()) {
@@ -139,11 +148,9 @@ PetChatOverlay::PetChatOverlay(QWidget& pet, ChatSession& chat, SpeechPlayback* 
                 voice_->reset();
             }
         }
-        showSpeech(QStringLiteral("正在想…"), true);
     });
     connect(&chat_, &ChatSession::replyUpdated, this, [this](const QString& text) {
         if (voice_ && voice_->managesReply()) {
-            bubble_->updateReader(text, true);
             voice_->submit(text, false);
             return;
         }
@@ -162,40 +169,75 @@ PetChatOverlay::PetChatOverlay(QWidget& pet, ChatSession& chat, SpeechPlayback* 
         }
         pendingPrompt_.clear();
         if (voice_ && error.isEmpty() && voice_->managesReply() && !text.isEmpty()) {
-            bubble_->updateReader(text, false);
             voice_->submit(text, true);
             return;
         }
         if (voice_) {
             voice_->reset();
         }
-        const auto message = error.isEmpty() ? text : error;
-        showSpeech(message, false);
+        if (!error.isEmpty() && !proactiveSpeech_) {
+            showChatError(error);
+        }
+        showSpeech(text, false);
         scheduleSpeechHide();
+        updateActivity();
         QTimer::singleShot(0, this, &PetChatOverlay::playQueuedSpeech);
     });
 }
 
-bool PetChatOverlay::showInput()
+void PetChatOverlay::syncEnvironmentFacts()
 {
-    if (!pet_.isVisible() || pet_.windowFlags().testFlag(Qt::WindowTransparentForInput)
-        || QApplication::activeModalWidget() || QApplication::activePopupWidget()) {
-        return false;
-    }
-    if (inputOpen_) {
-        return true;
+    interaction_.petVisible = pet_.isVisible();
+    interaction_.clickThrough = pet_.windowFlags().testFlag(Qt::WindowTransparentForInput);
+    interaction_.modalBlocked = QApplication::activeModalWidget() || QApplication::activePopupWidget();
+}
+
+void PetChatOverlay::reconcilePresentation()
+{
+    syncEnvironmentFacts();
+    const OverlayPresentation next = interaction_.resolve();
+
+    if (next.showInput) {
+        input_->setReadOnly(chat_.busy());
+        positionPanels();
+        if (!inputShown_) {
+            inputPanel_->show();
+            inputPanel_->raise();
+            pointerClock_.start();
+        }
+    } else {
+        pointerClock_.stop();
+        summaryClock_.stop();
+        preedit_.clear();
+        if (inputShown_ || inputPanel_->isVisible()) {
+            inputPanel_->hide();
+        }
     }
 
-    inputOpen_ = true;
-    pointerWasAway_ = false;
-    input_->setReadOnly(chat_.busy());
+    if (next.showInput != inputShown_) {
+        inputShown_ = next.showInput;
+        emit inputVisibilityChanged(inputShown_);
+    }
+    if (next.showActivityMeter != meterShown_) {
+        meterShown_ = next.showActivityMeter;
+        emit activityMeterVisibilityChanged(meterShown_);
+    }
     updateActivity();
-    positionPanels();
-    inputPanel_->show();
-    inputPanel_->raise();
-    pointerClock_.start();
-    emit inputVisibilityChanged(true);
-    return true;
+}
+
+bool PetChatOverlay::showInput()
+{
+    syncEnvironmentFacts();
+    if (!interaction_.resolve().canOpenInput) {
+        return false;
+    }
+    if (inputShown_) {
+        return true;
+    }
+    interaction_.input = OverlayInteraction::Input::Visible;
+    pointerWasAway_ = false;
+    reconcilePresentation();
+    return inputShown_;
 }
 
 void PetChatOverlay::focusInput()
@@ -211,6 +253,76 @@ void PetChatOverlay::releaseInputFocus()
 {
     input_->clearFocus();
     pet_.activateWindow();
+}
+
+void PetChatOverlay::setDragging(bool dragging)
+{
+    if (interaction_.dragging == dragging) {
+        return;
+    }
+    interaction_.dragging = dragging;
+    if (dragging) {
+        interaction_.input = OverlayInteraction::Input::Hidden;
+    }
+    reconcilePresentation();
+}
+
+void PetChatOverlay::setAiming(bool aiming)
+{
+    if (interaction_.aiming == aiming) {
+        return;
+    }
+    interaction_.aiming = aiming;
+    if (aiming) {
+        interaction_.input = OverlayInteraction::Input::Hidden;
+    }
+    reconcilePresentation();
+}
+
+void PetChatOverlay::setActivityMeterEnabled(bool enabled)
+{
+    if (interaction_.activityMeterEnabled == enabled) {
+        return;
+    }
+    interaction_.activityMeterEnabled = enabled;
+    reconcilePresentation();
+}
+
+void PetChatOverlay::setSpaceTransitTarget(const QPoint& landingPos)
+{
+    spaceTransitActive_ = true;
+    spaceTransitLandingPos_ = landingPos;
+
+    const bool activelySpeaking = interaction_.speech == OverlayInteraction::Speech::Generating
+        || (voice_ && voice_->busy()) || chat_.busy();
+    const qsizetype displayedLen = qMax<qsizetype>(0, fullSpeech_.size() - speechWindowStart_);
+    if (activelySpeaking && interaction_.bubbleVisible()
+        && (displayedLen >= 28 || bubble_->visibleLines() >= 2)) {
+        speechWindowStart_ = fullSpeech_.size();
+        QChar prev;
+        for (qsizetype i = speechWindowStart_ - 1; i >= 0; --i) {
+            const QChar c = fullSpeech_.at(i);
+            if (!c.isSpace() && c != u'*') {
+                prev = c;
+                break;
+            }
+        }
+        const bool atClauseEnd = prev.isNull() || QStringLiteral("。！？!?…\n）)").contains(prev);
+        speechContinuationPrefix_ = !atClauseEnd;
+        bubble_->beginReply();
+        bubble_->hide();
+    } else if (interaction_.bubbleVisible()) {
+        positionPanels();
+    }
+}
+
+void PetChatOverlay::endSpaceTransit()
+{
+    if (!spaceTransitActive_) {
+        return;
+    }
+    spaceTransitActive_ = false;
+    positionPanels();
 }
 
 void PetChatOverlay::checkPointer()
@@ -237,16 +349,8 @@ void PetChatOverlay::checkPointer()
 
 void PetChatOverlay::closeInput()
 {
-    pointerClock_.stop();
-    summaryClock_.stop();
-    const bool wasOpen = inputOpen_;
-    inputOpen_ = false;
-    preedit_.clear();
-    inputPanel_->hide();
-    if (wasOpen) {
-        emit inputVisibilityChanged(false);
-    }
-    updateActivity();
+    interaction_.input = OverlayInteraction::Input::Hidden;
+    reconcilePresentation();
 }
 
 void PetChatOverlay::reset()
@@ -255,10 +359,14 @@ void PetChatOverlay::reset()
     if (voice_) {
         voice_->reset();
     }
+    spaceTransitActive_ = false;
     closeInput();
     hideSpeech();
     streamRefresh_.stop();
     pendingSpeech_.clear();
+    fullSpeech_.clear();
+    speechWindowStart_ = 0;
+    speechContinuationPrefix_ = false;
     bubble_->beginReply();
     pendingPrompt_.clear();
     proactiveSpeech_ = false;
@@ -275,15 +383,39 @@ void PetChatOverlay::sayFixed(const QString& sentence)
         queuedFixedSpeech_ = sentence;
         return;
     }
+    presentSpeech(sentence, false);
+}
+
+void PetChatOverlay::sayRandom(const QString& sentence, const QByteArray& recording)
+{
+    if (!pet_.isVisible() || chat_.busy() || sentence.trimmed().isEmpty()) {
+        return;
+    }
+    queuedFixedSpeech_.clear();
+    presentSpeech(sentence, true, recording);
+}
+
+void PetChatOverlay::presentSpeech(const QString& sentence, bool proactive, const QByteArray& recording)
+{
     hideBubble_.stop();
     streamRefresh_.stop();
     pendingSpeech_.clear();
-    proactiveSpeech_ = false;
+    fullSpeech_.clear();
+    speechWindowStart_ = 0;
+    speechContinuationPrefix_ = false;
+    proactiveSpeech_ = proactive;
+    hideSpeech();
     bubble_->beginReply();
+    if (!recording.isEmpty()) {
+        if (!voice_ || !voice_->playRecording(recording, sentence)) {
+            showSpeech(sentence, false);
+            scheduleSpeechHide();
+        }
+        return;
+    }
     if (voice_) {
         voice_->begin(chat_.roleId());
         if (voice_->managesReply()) {
-            bubble_->updateReader(sentence, false);
             voice_->submit(sentence, true);
             return;
         }
@@ -323,35 +455,56 @@ void PetChatOverlay::sendInput()
     if (text.isEmpty()) {
         return;
     }
+    QToolTip::hideText();
     QString error;
     pendingPrompt_ = text;
     if (chat_.send(text, error)) {
         input_->clear();
         emit interactionSent();
     } else {
-        if (voice_) {
-            voice_->reset();
-        }
         pendingPrompt_.clear();
-        proactiveSpeech_ = false;
-        bubble_->beginReply();
-        showSpeech(error, false);
-        if (bubbleOpen_) {
-            hideBubble_.start(8500);
-        }
+        showChatError(error);
     }
 }
 
-void PetChatOverlay::showSpeech(const QString& text, bool generating, const QString& fullText)
+void PetChatOverlay::showChatError(const QString& error)
+{
+    if (!error.isEmpty() && pet_.isVisible()) {
+        QToolTip::showText(input_->mapToGlobal(QPoint(0, input_->height())), error, input_);
+    }
+}
+
+void PetChatOverlay::showSpeech(const QString& text, bool generating)
 {
     if (text.trimmed().isEmpty()) {
         return;
     }
-    bubble_->setMessage(text, generating, fullText);
+    if (!text.startsWith(fullSpeech_.left(speechWindowStart_))) {
+        speechWindowStart_ = 0;
+        speechContinuationPrefix_ = false;
+    }
+    fullSpeech_ = text;
+    QString display = speechWindowStart_ > 0 ? fullSpeech_.mid(speechWindowStart_) : fullSpeech_;
+    if (speechWindowStart_ > 0) {
+        qsizetype trim = 0;
+        while (trim < display.size() && (display.at(trim).isSpace() || QStringLiteral("，、,；;。").contains(display.at(trim)))) {
+            ++trim;
+        }
+        display = display.mid(trim);
+        if (display.isEmpty()) {
+            interaction_.speech = generating ? OverlayInteraction::Speech::Generating : OverlayInteraction::Speech::Displayed;
+            updateActivity();
+            return;
+        }
+        if (speechContinuationPrefix_) {
+            display.prepend(QStringLiteral("…"));
+        }
+    }
+    bubble_->setMessage(display);
     if (!pet_.isVisible()) {
         return;
     }
-    bubbleOpen_ = true;
+    interaction_.speech = generating ? OverlayInteraction::Speech::Generating : OverlayInteraction::Speech::Displayed;
     updateActivity();
     positionPanels();
     if (bubble_->isHidden()) {
@@ -362,7 +515,7 @@ void PetChatOverlay::showSpeech(const QString& text, bool generating, const QStr
 
 void PetChatOverlay::scheduleSpeechHide()
 {
-    if (bubbleOpen_) {
+    if (interaction_.bubbleVisible()) {
         hideBubble_.start(qBound(5500, 4600 + 950 * bubble_->visibleLines(), 16000));
     }
 }
@@ -370,7 +523,10 @@ void PetChatOverlay::scheduleSpeechHide()
 void PetChatOverlay::hideSpeech()
 {
     hideBubble_.stop();
-    bubbleOpen_ = false;
+    interaction_.speech = OverlayInteraction::Speech::Hidden;
+    fullSpeech_.clear();
+    speechWindowStart_ = 0;
+    speechContinuationPrefix_ = false;
     bubble_->hide();
     updateActivity();
 }
@@ -430,32 +586,65 @@ void PetChatOverlay::fitInput(const QRect& area)
 
 void PetChatOverlay::positionPanels()
 {
-    if (!inputOpen_ && !bubbleOpen_) {
+    if (!interaction_.inputVisible() && !interaction_.bubbleVisible()) {
         return;
     }
     const QRect area = desktopArea(pet_);
-    if (inputOpen_) {
+    if (interaction_.inputVisible()) {
         fitInput(area);
     }
     const QRect anchor = pet_.frameGeometry();
-    if (inputOpen_) {
+    if (interaction_.inputVisible()) {
         const int below = anchor.bottom() + 1 + gap;
         const int above = anchor.top() - gap - inputPanel_->height();
         const bool inputAbove = below + inputPanel_->height() > area.bottom() + 1 && above >= area.top();
         inputPanel_->move(boundedPanel(area, inputPanel_->size(), anchor.center().x(), inputAbove ? above : below));
     }
-    if (bubbleOpen_) {
-        bubble_->place(area, anchor, inputOpen_ ? anchor.united(inputPanel_->frameGeometry()) : anchor);
+    if (interaction_.bubbleVisible()) {
+        if (spaceTransitActive_) {
+            const QRect landingRect(spaceTransitLandingPos_, pet_.size());
+            const QPoint liveOffset = pet_.pos() - spaceTransitLandingPos_;
+            bubble_->placeWithTransitOffset(area, landingRect, liveOffset);
+        } else {
+            bubble_->place(area, anchor, interaction_.inputVisible() ? anchor.united(inputPanel_->frameGeometry()) : anchor);
+        }
     }
 }
 
 void PetChatOverlay::updateActivity()
 {
-    const bool active = inputOpen_ || bubbleOpen_;
+    const bool active = interaction_.inputVisible() || interaction_.bubbleVisible() || chat_.busy();
     if (active != active_) {
         active_ = active;
         emit activityChanged(active);
     }
+}
+
+bool PetChatOverlay::handleEscape(QEvent* event, bool composing)
+{
+    using Escape = OverlayInteraction::Escape;
+    const auto command = interaction_.escape(composing, chat_.busy(), voice_ && voice_->busy());
+    if (command == Escape::Ignore) {
+        return false;
+    }
+    event->accept();
+    if (event->type() != QEvent::KeyPress) {
+        return true;
+    }
+    switch (command) {
+    case Escape::Ignore: break;
+    case Escape::StopReply:
+        queuedFixedSpeech_.clear();
+        chat_.stop();
+        break;
+    case Escape::StopSpeech:
+        queuedFixedSpeech_.clear();
+        voice_->stopReading();
+        break;
+    case Escape::CloseInput: closeInput(); break;
+    case Escape::HideBubble: hideSpeech(); break;
+    }
+    return true;
 }
 
 bool PetChatOverlay::eventFilter(QObject* watched, QEvent* event)
@@ -471,17 +660,7 @@ bool PetChatOverlay::eventFilter(QObject* watched, QEvent* event)
             QTimer::singleShot(0, this, [this] { positionPanels(); });
         } else if (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress) {
             const auto* key = static_cast<QKeyEvent*>(event);
-            if (key->key() == Qt::Key_Escape && preedit_.isEmpty()) {
-                event->accept();
-                if (event->type() == QEvent::KeyPress) {
-                    if (chat_.busy()) {
-                        chat_.stop();
-                    } else if (voice_ && voice_->busy()) {
-                        voice_->stopReading();
-                    } else {
-                        closeInput();
-                    }
-                }
+            if (key->key() == Qt::Key_Escape && handleEscape(event, !preedit_.isEmpty())) {
                 return true;
             }
             if (event->type() == QEvent::KeyPress && preedit_.isEmpty()
@@ -499,19 +678,25 @@ bool PetChatOverlay::eventFilter(QObject* watched, QEvent* event)
     }
     if (watched == &pet_) {
         if (event->type() == QEvent::Hide) {
+            if (pet_.property("auraTransientHide").toBool()) {
+                return false;
+            }
             queuedFixedSpeech_.clear();
             if (voice_) {
                 voice_->reset();
             }
             closeInput();
             hideSpeech();
-        } else if (voice_ && voice_->busy()
-                   && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)
-                   && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
-            event->accept();
-            if (event->type() == QEvent::KeyPress) {
-                voice_->stopReading();
+        } else if (event->type() == QEvent::Show) {
+            if (interaction_.bubbleVisible()) {
+                positionPanels();
+                if (bubble_->isHidden()) {
+                    bubble_->show();
+                    bubble_->raise();
+                }
             }
+        } else if ((event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)
+                   && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape && handleEscape(event, false)) {
             return true;
         } else if (event->type() == QEvent::Enter && QGuiApplication::mouseButtons() == Qt::NoButton) {
             showInput();

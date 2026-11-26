@@ -20,10 +20,10 @@ struct CompanionEventInfo {
 };
 
 inline constexpr std::array<CompanionEventInfo, 13> companionEvents{{
-    {CompanionEvent::SlowKibble, "slow", "装载慢食猫粮"},
-    {CompanionEvent::HighKibble, "high", "装载高能猫粮"},
-    {CompanionEvent::Yarn, "yarn", "玩毛线球"},
-    {CompanionEvent::Catnip, "catnip", "使用猫薄荷"},
+    {CompanionEvent::SlowKibble, "slow", "切入静伴专注"},
+    {CompanionEvent::HighKibble, "high", "切入互动游玩"},
+    {CompanionEvent::Yarn, "yarn", "逗一逗（轻互动）"},
+    {CompanionEvent::Catnip, "catnip", "充个电（补充活力）"},
     {CompanionEvent::DoubleClick, "doubleClick", "双击桌宠"},
     {CompanionEvent::FocusStarted, "focusStart", "专注开始"},
     {CompanionEvent::FocusFinished, "focus", "专注结束"},
@@ -43,8 +43,9 @@ public:
     explicit CompanionEvents(QSettings& settings);
     void setRole(const QString& role, const QJsonObject& behavior, const QDateTime& now);
     void interacted(const QDateTime& now);
+    QDateTime lastInteraction() const { return lastInteraction_; }
     QJsonObject binding(CompanionEvent event) const;
-    QJsonObject nextReminder(const QDateTime& now, double activity, bool available);
+    QJsonObject nextReminder(const QDateTime& now, double activity, bool available, bool suppressLowActivity = false);
 
 private:
     QJsonObject greeting(CompanionEvent event, const QDateTime& now);

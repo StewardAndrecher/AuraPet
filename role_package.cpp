@@ -2,8 +2,10 @@
 #include "archive_sdk.h"
 #include "companion_events.h"
 #include "pet_asset.h"
+#include "random_speech.h"
 
 #include <QCryptographicHash>
+#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -11,6 +13,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QUuid>
+#include <QVersionNumber>
 
 #include <algorithm>
 #include <array>
@@ -29,6 +32,7 @@ const QString cardPath = QStringLiteral("role/card.json");
 const QString behaviorPath = QStringLiteral("behavior.json");
 const QString voicesPath = QStringLiteral("voice/voices.json");
 const QString corpusPath = QStringLiteral("voice/corpus.json");
+const QString transcriptsPath = QStringLiteral("voice/transcripts.json");
 
 QString archiveError(archive* zip)
 {
@@ -38,7 +42,7 @@ QString archiveError(archive* zip)
 bool allowedPath(const QString& path)
 {
     static const QRegularExpression pattern(QStringLiteral(
-        R"(\A(?:manifest\.json|role/card\.json|behavior\.json|voice/(?:voices|corpus)\.json|assets/(?:default|idle|happy|sleepy)\.(?:gif|png|jpg|avif)|voice/(?:ref-(?:zh|ja)|corpus/(?:zh|ja)/[0-9]{3})\.wav)\z)"));
+        R"(\A(?:manifest\.json|role/card\.json|behavior\.json|voice/(?:voices|corpus|transcripts)\.json|assets/(?:default|idle|happy|sleepy)\.(?:gif|png|jpg|avif)|voice/(?:ref-(?:zh|ja)|corpus/(?:zh|ja)/[0-9]{3})\.wav)\z)"));
     return pattern.match(path).hasMatch();
 }
 
@@ -50,7 +54,16 @@ qint64 fileLimit(const QString& path)
     return path.startsWith(QStringLiteral("voice/")) ? maxVoiceBytes : maxPetAssetBytes;
 }
 
-std::optional<Files> readZip(const QString& path, QString& error)
+bool report(const RolePackageProgress& progress, int value, QString& error)
+{
+    if (!progress || progress(value)) {
+        return true;
+    }
+    error = QStringLiteral("操作已取消。");
+    return false;
+}
+
+std::optional<Files> readZip(const QString& path, QString& error, const RolePackageProgress& progress)
 {
     QFile input(path);
     if (!input.open(QIODevice::ReadOnly) || input.size() > maxPackageBytes || input.isSequential()) {
@@ -79,7 +92,10 @@ std::optional<Files> readZip(const QString& path, QString& error)
         QByteArray bytes(size, Qt::Uninitialized);
         qsizetype received = 0;
         while (received < size) {
-            const auto count = archive_read_data(zip.get(), bytes.data() + received, size - received);
+            if (!report(progress, static_cast<int>((total + received) * 65 / maxPackageBytes), error)) {
+                return std::nullopt;
+            }
+            const auto count = archive_read_data(zip.get(), bytes.data() + received, qMin<qint64>(size - received, 1024 * 1024));
             if (count <= 0) {
                 error = QStringLiteral("角色包内的素材损坏或读取不完整。");
                 return std::nullopt;
@@ -101,7 +117,7 @@ std::optional<Files> readZip(const QString& path, QString& error)
     return files;
 }
 
-bool writeZip(const QString& path, const Files& files, QString& error)
+bool writeZip(const QString& path, const Files& files, QString& error, const RolePackageProgress& progress)
 {
     QSaveFile output(path);
     if (!output.open(QIODevice::WriteOnly)) {
@@ -119,19 +135,39 @@ bool writeZip(const QString& path, const Files& files, QString& error)
         error = QStringLiteral("无法创建 ZIP 文件记录。");
         return false;
     }
+    int finished = 0;
     for (auto it = files.cbegin(); it != files.cend(); ++it) {
+        const int value = 35 + 63 * finished / files.size();
+        if (!report(progress, value, error)) {
+            return false;
+        }
         archive_entry_set_pathname(entry.get(), it.key().toLatin1().constData());
         archive_entry_set_filetype(entry.get(), AE_IFREG);
         archive_entry_set_perm(entry.get(), 0644);
         archive_entry_set_size(entry.get(), it.value().size());
-        if (archive_write_header(zip.get(), entry.get()) != ARCHIVE_OK
-            || archive_write_data(zip.get(), it.value().constData(), it.value().size()) != it.value().size()) {
+        if (archive_write_header(zip.get(), entry.get()) != ARCHIVE_OK) {
             error = QStringLiteral("写入角色包失败。") + archiveError(zip.get());
             return false;
         }
+        for (qsizetype bytesWritten = 0; bytesWritten < it.value().size();) {
+            if (!report(progress, value, error)) {
+                return false;
+            }
+            const auto chunk = qMin<qsizetype>(it.value().size() - bytesWritten, 1024 * 1024);
+            const auto count = archive_write_data(zip.get(), it.value().constData() + bytesWritten, chunk);
+            if (count != chunk) {
+                error = QStringLiteral("写入角色包失败。") + archiveError(zip.get());
+                return false;
+            }
+            bytesWritten += count;
+        }
+        ++finished;
     }
     if (archive_write_close(zip.get()) != ARCHIVE_OK) {
         error = QStringLiteral("无法完成角色包。") + archiveError(zip.get());
+        return false;
+    }
+    if (!report(progress, 99, error)) {
         return false;
     }
     if (!output.commit()) {
@@ -206,30 +242,51 @@ bool validWav(const QByteArray& bytes)
 }
 }
 
-bool validateRoleShare(const RoleShare& share, QString& error)
+bool validateRoleCard(const QJsonObject& card, QString& error)
 {
-    for (const auto& object : {share.card, share.behavior, share.voices, share.corpusNames}) {
-        if (QJsonDocument(object).toJson(QJsonDocument::Compact).size() > maxJsonBytes) {
-            error = QStringLiteral("角色卡、行为预设或语音清单超过 128 KiB。");
+    if (card.isEmpty()) {
+        return true;
+    }
+    if (QJsonDocument(card).toJson(QJsonDocument::Compact).size() > maxJsonBytes) {
+        error = QStringLiteral("角色卡超过 128 KiB。");
+        return false;
+    }
+    const auto prompt = card.value(QStringLiteral("corePrompt"));
+    const auto core = prompt.toArray();
+    qsizetype characters = 0;
+    for (const auto& line : core) {
+        if (!line.isString() || line.toString().trimmed().isEmpty()) {
+            error = QStringLiteral("AI 聊天角色设定应由非空文本组成。");
             return false;
         }
+        characters += line.toString().size();
     }
-    if (!share.card.isEmpty()) {
-        const auto core = share.card.value(QStringLiteral("corePrompt")).toArray();
-        qsizetype characters = 0;
-        for (const auto& line : core) {
-            if (!line.isString() || line.toString().trimmed().isEmpty()) {
-                error = QStringLiteral("角色卡的 corePrompt 应由非空文本组成。");
-                return false;
-            }
-            characters += line.toString().size();
-        }
-        if (share.card.value(QStringLiteral("schemaVersion")).toInt() != 1 || characters == 0 || characters > 4000) {
-            error = QStringLiteral("角色卡需使用版本 1，并包含最多 4000 字符的核心设定。");
+    const auto identity = card.value(QStringLiteral("identityAndStance"));
+    if (card.value(QStringLiteral("schemaVersion")).toInt() != 1 || characters > 4000
+        || (!prompt.isUndefined() && !prompt.isArray())
+        || (!identity.isUndefined() && (!identity.isString() || identity.toString().size() > 4000))) {
+        error = QStringLiteral("角色卡需使用版本 1。身份与立场、AI 聊天角色设定各最多 4000 字符。");
+        return false;
+    }
+    return true;
+}
+
+bool validateRoleShare(const RoleShare& share, QString& error)
+{
+    if (!validateRoleCard(share.card, error)) {
+        return false;
+    }
+    for (const auto& object : {share.behavior, share.voices, share.corpusNames, share.corpusTexts}) {
+        if (QJsonDocument(object).toJson(QJsonDocument::Compact).size() > maxJsonBytes) {
+            error = QStringLiteral("行为预设或语音清单超过 128 KiB。");
             return false;
         }
     }
     const auto behavior = share.behavior;
+    const auto randomSpeech = behavior.value(QStringLiteral("randomSpeech"));
+    if (!randomSpeech.isUndefined() && !validateRandomSpeech(randomSpeech.toObject(), error)) {
+        return false;
+    }
     if (!supportedChoice(behavior.value(QStringLiteral("kibble")), {QStringLiteral("none"), QStringLiteral("slow"), QStringLiteral("high")})
         || (behavior.contains(QStringLiteral("randomMovement")) && !behavior.value(QStringLiteral("randomMovement")).isBool())
         || (behavior.contains(QStringLiteral("events")) && !behavior.value(QStringLiteral("events")).isObject())) {
@@ -272,6 +329,14 @@ bool validateRoleShare(const RoleShare& share, QString& error)
             return false;
         }
     }
+    for (auto it = share.corpusTexts.constBegin(); it != share.corpusTexts.constEnd(); ++it) {
+        const auto text = it.value().toString().trimmed();
+        if (!it.key().startsWith(QStringLiteral("voice/corpus/")) || !share.files.contains(it.key())
+            || text.isEmpty() || text.size() > 4000) {
+            error = QStringLiteral("语音台词需要对应包内的录音，且每条最多 4000 字符。");
+            return false;
+        }
+    }
     qint64 total = 0;
     for (auto it = share.files.cbegin(); it != share.files.cend(); ++it) {
         if (!allowedPath(it.key())
@@ -289,9 +354,96 @@ bool validateRoleShare(const RoleShare& share, QString& error)
     return true;
 }
 
-std::optional<RolePackage> readRolePackage(const QString& path, QString& error)
+bool replaceRoleCorpusFolder(RoleShare& share, const QString& language, const QString& path, QString& error)
 {
-    auto files = readZip(path, error);
+    const QDir folder(path);
+    const auto wavs = folder.entryInfoList({QStringLiteral("*.wav")}, QDir::Files | QDir::Readable | QDir::NoSymLinks,
+                                           QDir::Name | QDir::IgnoreCase);
+    if ((language != QStringLiteral("zh") && language != QStringLiteral("ja")) || wavs.isEmpty() || wavs.size() > 200) {
+        error = QStringLiteral("请选择包含 1 到 200 段 WAV 的语音文件夹。");
+        return false;
+    }
+    auto candidate = share;
+    const auto prefix = QStringLiteral("voice/corpus/%1/").arg(language);
+    QMap<QString, QString> previousPaths;
+    auto it = candidate.files.lowerBound(prefix);
+    while (it != candidate.files.end() && it.key().startsWith(prefix)) {
+        previousPaths.insert(candidate.corpusNames.value(it.key()).toString(), it.key());
+        candidate.corpusNames.remove(it.key());
+        candidate.corpusTexts.remove(it.key());
+        it = candidate.files.erase(it);
+    }
+    qint64 total = 0;
+    for (const auto& audio : candidate.files) {
+        total += audio.size();
+    }
+    int index = 0;
+    for (const auto& wav : wavs) {
+        QFile file(wav.absoluteFilePath());
+        if (!file.open(QIODevice::ReadOnly) || file.size() > maxVoiceBytes) {
+            error = QStringLiteral("无法读取「%1」，或文件超过 16 MiB。").arg(wav.fileName());
+            return false;
+        }
+        const auto audio = file.read(maxVoiceBytes + 1);
+        total += audio.size();
+        if (!validWav(audio) || total > 128 * 1024 * 1024) {
+            error = QStringLiteral("「%1」不是有效的 WAV，或语音合计超过 128 MiB。").arg(wav.fileName());
+            return false;
+        }
+        const auto key = prefix + QStringLiteral("%1.wav").arg(++index, 3, 10, u'0');
+        const auto oldKey = previousPaths.value(wav.fileName());
+        if (share.corpusTexts.contains(oldKey) && audio == share.files.value(oldKey)) {
+            candidate.corpusTexts.insert(key, share.corpusTexts.value(oldKey));
+        }
+        candidate.files.insert(key, audio);
+        candidate.corpusNames.insert(key, wav.fileName());
+    }
+    if (!validateRoleShare(candidate, error)) {
+        return false;
+    }
+    share = std::move(candidate);
+    return true;
+}
+
+QList<QPair<QString, QString>> describeRoleBehavior(const QJsonObject& behavior)
+{
+    QList<QPair<QString, QString>> rows;
+    const auto kibble = behavior.value(QStringLiteral("kibble")).toString();
+    if (!kibble.isEmpty()) {
+        rows.append({QStringLiteral("默认猫粮"), kibble == QStringLiteral("slow") ? QStringLiteral("慢食猫粮")
+            : kibble == QStringLiteral("high") ? QStringLiteral("高能猫粮") : QStringLiteral("无")});
+    }
+    const auto movement = behavior.value(QStringLiteral("randomMovement"));
+    if (movement.isBool()) {
+        rows.append({QStringLiteral("随机移动"), movement.toBool() ? QStringLiteral("开启") : QStringLiteral("关闭")});
+    }
+    const auto events = behavior.value(QStringLiteral("events")).toObject();
+    const QMap<QString, QString> actionNames{
+        {QStringLiteral("none"), QStringLiteral("不播动作")}, {QStringLiteral("idle"), QStringLiteral("回到待机")},
+        {QStringLiteral("happy"), QStringLiteral("开心")}, {QStringLiteral("sleepy"), QStringLiteral("困倦")},
+        {QStringLiteral("bounce"), QStringLiteral("轻跳")},
+    };
+    for (const auto& entry : companionEvents) {
+        const auto event = events.value(QLatin1String(entry.key)).toObject();
+        const auto action = actionNames.value(event.value(QStringLiteral("action")).toString());
+        const auto line = event.value(QStringLiteral("line")).toString();
+        QStringList details;
+        if (!action.isEmpty()) {
+            details.append(action);
+        }
+        if (!line.isEmpty() && entry.event != CompanionEvent::DoubleClick) {
+            details.append(QStringLiteral("「%1」").arg(line));
+        }
+        if (!details.isEmpty()) {
+            rows.append({QString::fromUtf8(entry.label), details.join(QStringLiteral(" · "))});
+        }
+    }
+    return rows;
+}
+
+std::optional<RolePackage> readRolePackage(const QString& path, QString& error, const RolePackageProgress& progress)
+{
+    auto files = readZip(path, error, progress);
     if (!files) {
         return std::nullopt;
     }
@@ -304,11 +456,28 @@ std::optional<RolePackage> readRolePackage(const QString& path, QString& error)
         error = QStringLiteral("无法识别此角色包的格式版本。");
         return std::nullopt;
     }
+    const auto minimum = manifest.value(QStringLiteral("minimumAppVersion"));
+    if (!minimum.isUndefined()) {
+        const auto required = minimum.toString();
+        static const QRegularExpression versionSyntax(QStringLiteral(R"(\A[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}\z)"));
+        if (!versionSyntax.match(required).hasMatch()) {
+            error = QStringLiteral("角色包的最低应用版本格式无效。");
+            return std::nullopt;
+        }
+        if (QVersionNumber::fromString(required) > QVersionNumber::fromString(QStringLiteral(AURAPET_VERSION))) {
+            error = QStringLiteral("此角色包需要 AuraPet %1 或更新版本。").arg(required);
+            return std::nullopt;
+        }
+    }
     if (!validId(id) || name.isEmpty() || name.size() > 80 || declared.size() != files->size()) {
         error = QStringLiteral("角色包信息或素材清单不完整。");
         return std::nullopt;
     }
+    int checked = 0;
     for (auto it = files->cbegin(); it != files->cend(); ++it) {
+        if (!report(progress, 65 + 20 * checked++ / files->size(), error)) {
+            return std::nullopt;
+        }
         const auto hash = QCryptographicHash::hash(it.value(), QCryptographicHash::Sha256).toHex();
         if (declared.value(it.key()).toString().toLatin1() != hash) {
             error = QStringLiteral("素材清单中的校验值不一致。");
@@ -324,7 +493,10 @@ std::optional<RolePackage> readRolePackage(const QString& path, QString& error)
         return std::nullopt;
     }
     package.asset = files->take(basePath);
-    const auto asset = decodePetAsset(package.asset, error);
+    if (!report(progress, 86, error)) {
+        return std::nullopt;
+    }
+    const auto asset = decodePetPixels(package.asset, error);
     if (!asset) {
         return std::nullopt;
     }
@@ -344,7 +516,10 @@ std::optional<RolePackage> readRolePackage(const QString& path, QString& error)
             return std::nullopt;
         }
         auto bytes = files->take(actionPath);
-        const auto action = decodePetAsset(bytes, error);
+        if (!report(progress, 90 + static_cast<int>(slot), error)) {
+            return std::nullopt;
+        }
+        const auto action = decodePetPixels(bytes, error);
         if (!action) {
             return std::nullopt;
         }
@@ -355,7 +530,8 @@ std::optional<RolePackage> readRolePackage(const QString& path, QString& error)
     }
     struct Section { QString path; QJsonObject RoleShare::* field; };
     for (const auto& section : {Section{cardPath, &RoleShare::card}, Section{behaviorPath, &RoleShare::behavior},
-                                Section{voicesPath, &RoleShare::voices}, Section{corpusPath, &RoleShare::corpusNames}}) {
+                                Section{voicesPath, &RoleShare::voices}, Section{corpusPath, &RoleShare::corpusNames},
+                                Section{transcriptsPath, &RoleShare::corpusTexts}}) {
         if (files->contains(section.path)) {
             const auto doc = QJsonDocument::fromJson(files->take(section.path));
             if (!doc.isObject()) {
@@ -366,16 +542,17 @@ std::optional<RolePackage> readRolePackage(const QString& path, QString& error)
         }
     }
     package.share.files = std::move(*files);
-    if (!validateRoleShare(package.share, error)) {
+    if (!report(progress, 98, error) || !validateRoleShare(package.share, error)) {
         return std::nullopt;
     }
     return package;
 }
 
-bool writeRolePackage(const QString& path, const RolePackage& package, bool includeCorpus, QString& error)
+bool writeRolePackage(const QString& path, const RolePackage& package, bool includeCorpus, QString& error,
+                      const RolePackageProgress& progress)
 {
-    if (!validId(package.id) || package.name.trimmed().isEmpty() || package.name.size() > 80
-        || !decodePetAsset(package.asset, error) || !validateRoleShare(package.share, error)) {
+    if (!report(progress, 0, error) || !validId(package.id) || package.name.trimmed().isEmpty() || package.name.size() > 80
+        || !decodePetPixels(package.asset, error) || !validateRoleShare(package.share, error)) {
         if (error.isEmpty()) {
             error = QStringLiteral("角色信息或素材不完整。");
         }
@@ -386,7 +563,7 @@ bool writeRolePackage(const QString& path, const RolePackage& package, bool incl
     files.insert(basePath, package.asset);
     QJsonObject actions;
     for (auto it = package.actions.cbegin(); it != package.actions.cend(); ++it) {
-        if (!decodePetAsset(it->bytes, error)) {
+        if (!report(progress, 5 + static_cast<int>(it.key()), error) || !decodePetPixels(it->bytes, error)) {
             return false;
         }
         const auto key = slotKey(it.key());
@@ -408,10 +585,17 @@ bool writeRolePackage(const QString& path, const RolePackage& package, bool incl
         }
     };
     addJson(cardPath, package.share.card);
-    addJson(behaviorPath, package.share.behavior);
+    auto behavior = package.share.behavior;
+    if (!includeCorpus && behavior.contains(QStringLiteral("randomSpeech"))) {
+        auto config = randomSpeechConfig(behavior);
+        config.recordings = {};
+        behavior.insert(QStringLiteral("randomSpeech"), encodeRandomSpeech(config));
+    }
+    addJson(behaviorPath, behavior);
     addJson(voicesPath, package.share.voices);
     if (includeCorpus) {
         addJson(corpusPath, package.share.corpusNames);
+        addJson(transcriptsPath, package.share.corpusTexts);
     }
     for (auto it = package.share.files.cbegin(); it != package.share.files.cend(); ++it) {
         if (includeCorpus || !it.key().startsWith(QStringLiteral("voice/corpus/"))) {
@@ -420,13 +604,26 @@ bool writeRolePackage(const QString& path, const RolePackage& package, bool incl
     }
     QJsonObject list;
     qint64 total = 0;
+    int hashed = 0;
     for (auto it = files.cbegin(); it != files.cend(); ++it) {
+        if (!report(progress, 10 + 25 * hashed++ / files.size(), error)) {
+            return false;
+        }
         list.insert(it.key(), QString::fromLatin1(QCryptographicHash::hash(it.value(), QCryptographicHash::Sha256).toHex()));
         total += it.value().size();
     }
+    const bool extendedCard = !package.share.card.isEmpty()
+        && (package.share.card.contains(QStringLiteral("identityAndStance"))
+            || package.share.card.value(QStringLiteral("corePrompt")).toArray().isEmpty());
+    const bool withTranscripts = includeCorpus && !package.share.corpusTexts.isEmpty();
+    const auto speech = behavior.value(QStringLiteral("randomSpeech")).toObject();
+    const auto minimumVersion = speech.contains(QStringLiteral("withAi")) ? QStringLiteral("1.0.32")
+        : behavior.contains(QStringLiteral("randomSpeech")) ? QStringLiteral("1.0.31")
+        : extendedCard ? QStringLiteral("1.0.29")
+        : withTranscripts ? QStringLiteral("1.0.28") : QStringLiteral("1.0.27");
     files.insert(manifestPath, QJsonDocument(QJsonObject{
         {QStringLiteral("format"), QStringLiteral("gif-pet")}, {QStringLiteral("schemaVersion"), 1},
-        {QStringLiteral("minimumAppVersion"), QStringLiteral("1.0.27")}, {QStringLiteral("id"), package.id},
+        {QStringLiteral("minimumAppVersion"), minimumVersion}, {QStringLiteral("id"), package.id},
         {QStringLiteral("name"), package.name}, {QStringLiteral("asset"), basePath}, {QStringLiteral("actions"), actions},
         {QStringLiteral("files"), list},
     }).toJson(QJsonDocument::Indented));
@@ -434,7 +631,7 @@ bool writeRolePackage(const QString& path, const RolePackage& package, bool incl
         error = QStringLiteral("角色包大小将超过 256 MiB。");
         return false;
     }
-    return writeZip(path, files, error);
+    return writeZip(path, files, error, progress);
 }
 
 QStringList rolePromptContext(const QJsonObject& card, const QString& text)
@@ -450,13 +647,20 @@ QStringList rolePromptContext(const QJsonObject& card, const QString& text)
             }
         }
     }
+    QJsonObject selectedExample;
     for (const auto& value : card.value(QStringLiteral("examples")).toArray()) {
         const auto example = value.toObject();
-        if (!matches(example, text)) {
-            continue;
+        if (matches(example, text)) {
+            selectedExample = example;
+            break;
         }
+        if (selectedExample.isEmpty() && example.value(QStringLiteral("tags")).toArray().isEmpty()) {
+            selectedExample = example;
+        }
+    }
+    if (!selectedExample.isEmpty()) {
         QStringList lines;
-        for (const auto& part : example.value(QStringLiteral("messages")).toArray()) {
+        for (const auto& part : selectedExample.value(QStringLiteral("messages")).toArray()) {
             const auto message = part.toObject();
             const auto content = message.value(QStringLiteral("content")).toString().left(650);
             if (!content.isEmpty()) {
@@ -470,7 +674,6 @@ QStringList rolePromptContext(const QJsonObject& card, const QString& text)
         if (lines.size() == 2) {
             context.append(QStringLiteral("语气示例（只参考表达风格，不将其中情节或数值用作当前事实）：\n")
                            + lines.join(u'\n'));
-            break;
         }
     }
     return context;

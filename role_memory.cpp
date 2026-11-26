@@ -64,6 +64,22 @@ bool RoleLibrary::initMemorySchema(QString& error)
     return true;
 }
 
+bool RoleLibrary::clearConversation(const QString& id, QString& error)
+{
+    if (!database_.transaction()) {
+        error = database_.lastError().text();
+        return false;
+    }
+    for (const auto& table : {QStringLiteral("archive_memory"), QStringLiteral("role_memory"),
+                              QStringLiteral("chat_archives"), QStringLiteral("chat_messages")}) {
+        auto query = forRole(database_, QStringLiteral("DELETE FROM %1 WHERE role_id=?").arg(table), id);
+        if (!execute(query, error)) {
+            return endTransaction(database_, false, error);
+        }
+    }
+    return endTransaction(database_, true, error);
+}
+
 qint64 RoleLibrary::summarizedThrough(const QString& id, QString& error) const
 {
     auto query = forRole(database_, QStringLiteral("SELECT COALESCE(MAX(last_id),0) FROM chat_archives WHERE role_id = ?"), id);

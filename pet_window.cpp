@@ -10,7 +10,6 @@
 #include <QPainter>
 #include <QPointer>
 #include <QScreen>
-#include <QShortcut>
 #include <QShowEvent>
 #include <QTimer>
 #include <QUrl>
@@ -35,8 +34,6 @@ PetWindow::PetWindow()
         update();
     });
 
-    auto* quitShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    connect(quitShortcut, &QShortcut::activated, qApp, &QApplication::quit);
 }
 
 void PetWindow::setAsset(PetAsset asset, int scalePercent)
@@ -46,6 +43,9 @@ void PetWindow::setAsset(PetAsset asset, int scalePercent)
     bounceProgress_ = 1;
     movie_ = std::move(asset.movie);
     firstFrame_ = std::move(asset.firstFrame);
+    cachedIdleScaled_ = {};
+    cachedIdlePixelSize_ = {};
+    cachedIdleFrameNumber_ = -2;
     movieStarted_ = false;
     baseSize_ = firstFrame_.deviceIndependentSize().toSize();
     if (baseSize_.width() > 360 || baseSize_.height() > 360) {
@@ -174,17 +174,58 @@ void PetWindow::setClickThrough(bool enabled)
     }
     const bool visible = isVisible();
     const QPoint position = pos();
+    setProperty("auraTransientHide", true);
     setWindowFlag(Qt::WindowTransparentForInput, enabled);
     placeAt(position);
     if (visible) {
         show();
     }
+    setProperty("auraTransientHide", false);
+}
+
+void PetWindow::setAlwaysOnTop(bool enabled)
+{
+    alwaysOnTop_ = enabled;
+    if (windowFlags().testFlag(Qt::WindowStaysOnTopHint) == enabled) {
+        return;
+    }
+    const bool visible = isVisible();
+    const QPoint position = pos();
+    setProperty("auraTransientHide", true);
+    setWindowFlag(Qt::WindowStaysOnTopHint, enabled);
+    placeAt(position);
+    if (visible) {
+        show();
+    }
+    setProperty("auraTransientHide", false);
 }
 
 void PetWindow::setAimLean(qreal degrees)
 {
     if (qAbs(aimLean_ - degrees) > .04 || (degrees == 0 && aimLean_ != 0)) {
         aimLean_ = degrees;
+        update();
+    }
+}
+
+void PetWindow::setTransitPose(qreal leanDegrees, qreal scaleX, qreal scaleY)
+{
+    if (qAbs(transitLean_ - leanDegrees) > .02
+        || qAbs(transitScaleX_ - scaleX) > .002
+        || qAbs(transitScaleY_ - scaleY) > .002) {
+        transitLean_ = leanDegrees;
+        transitScaleX_ = scaleX;
+        transitScaleY_ = scaleY;
+        update();
+    }
+}
+
+void PetWindow::resetTransitPose()
+{
+    if (transitLean_ != 0 || transitScaleX_ != 1.0 || transitScaleY_ != 1.0) {
+        transitLean_ = 0;
+        transitScaleX_ = 1.0;
+        transitScaleY_ = 1.0;
         update();
     }
 }
@@ -200,16 +241,22 @@ void PetWindow::paintEvent(QPaintEvent*)
     QPainter painter(this);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     painter.setCompositionMode(QPainter::CompositionMode_Source);
-    if (!qFuzzyIsNull(aimLean_) || bounceProgress_ < 1) {
+    const bool hasTransitPose = !qFuzzyIsNull(transitLean_)
+        || !qFuzzyCompare(transitScaleX_, 1.0)
+        || !qFuzzyCompare(transitScaleY_, 1.0);
+    if (!qFuzzyIsNull(aimLean_) || bounceProgress_ < 1 || hasTransitPose) {
         painter.fillRect(rect(), Qt::transparent);
-        const QPointF center = rect().center();
-        const double pulse = std::sin(bounceProgress_ * 3.141592653589793);
-        const double tilt = aimLean_ + pulse * 12 * std::sin(bounceProgress_ * 8);
-        painter.translate(center + QPointF(2 * pulse, -qMin(12.0, height() * .08) * pulse));
+        const QPointF pivot = hasTransitPose
+            ? QPointF(rect().center().x(), rect().bottom() - height() * 0.12)
+            : QPointF(rect().center());
+        const double pulse = bounceProgress_ < 1 ? std::sin(bounceProgress_ * 3.141592653589793) : 0.0;
+        const double tilt = aimLean_ + transitLean_ + pulse * 12 * std::sin(bounceProgress_ * 8);
+        painter.translate(pivot + QPointF(2 * pulse, -qMin(12.0, height() * .08) * pulse));
         painter.rotate(tilt);
-        const double clearance = 1 - .006 * qAbs(tilt);
-        painter.scale(clearance, clearance * (1 - pulse * .035));
-        painter.translate(-center);
+        const double maxAxisScale = qMax(1.0, qMax(double(transitScaleX_), double(transitScaleY_)));
+        const double clearance = (1 - .006 * qAbs(tilt)) / maxAxisScale;
+        painter.scale(clearance * transitScaleX_, clearance * transitScaleY_ * (1 - pulse * .035));
+        painter.translate(-pivot);
     }
     if (!actionFrame_.isNull()) {
         const auto moving = actionMovie_ ? actionMovie_->currentPixmap() : QPixmap{};
@@ -219,8 +266,26 @@ void PetWindow::paintEvent(QPaintEvent*)
         painter.drawPixmap(QRect((width() - fit.width()) / 2, height() - fit.height(), fit.width(), fit.height()), frame);
         return;
     }
-    const QPixmap current = movie_ ? movie_->currentPixmap() : firstFrame_;
-    painter.drawPixmap(rect(), current.isNull() ? firstFrame_ : current);
+    const int frameIndex = movie_ ? movie_->currentFrameNumber() : -1;
+    const qreal dpr = qMax(1.0, devicePixelRatioF());
+    const QSize targetPixels = (QSizeF(size()) * dpr).toSize().expandedTo(QSize(1, 1));
+    if (cachedIdleScaled_.isNull() || cachedIdleFrameNumber_ != frameIndex || cachedIdlePixelSize_ != targetPixels) {
+        const QPixmap current = movie_ ? movie_->currentPixmap() : firstFrame_;
+        const QPixmap& source = current.isNull() ? firstFrame_ : current;
+        if (!source.isNull()) {
+            if (source.size() == targetPixels) {
+                cachedIdleScaled_ = source;
+            } else {
+                cachedIdleScaled_ = source.scaled(targetPixels, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            }
+            cachedIdleScaled_.setDevicePixelRatio(dpr);
+            cachedIdleFrameNumber_ = frameIndex;
+            cachedIdlePixelSize_ = targetPixels;
+        }
+    }
+    if (!cachedIdleScaled_.isNull()) {
+        painter.drawPixmap(rect(), cachedIdleScaled_);
+    }
 }
 
 void PetWindow::playAction(PetAsset asset, int stillDurationMs)
@@ -314,9 +379,17 @@ void PetWindow::showEvent(QShowEvent* event)
 
 void PetWindow::hideEvent(QHideEvent* event)
 {
+    const bool wasDragging = dragMoved_;
+    dragMoved_ = false;
     suppressClickRelease_ = false;
+    transitLean_ = 0;
+    transitScaleX_ = 1.0;
+    transitScaleY_ = 1.0;
     bounceAnimation_.stop();
     bounceProgress_ = 1;
+    if (wasDragging && dragStateChanged) {
+        dragStateChanged(false);
+    }
     if (movie_ && movie_->state() == QMovie::Running) {
         movie_->setPaused(true);
     }
@@ -347,7 +420,11 @@ void PetWindow::mouseMoveEvent(QMouseEvent* event)
     if (event->buttons().testFlag(Qt::LeftButton)) {
         const QPoint target = event->globalPosition().toPoint() - dragOffset_;
         if (dragMoved_ || (target - pos()).manhattanLength() >= QApplication::startDragDistance()) {
+            const bool started = !dragMoved_;
             dragMoved_ = true;
+            if (started && dragStateChanged) {
+                dragStateChanged(true);
+            }
             if (primaryOnly_) {
                 placeAt(target);
             } else {
@@ -363,8 +440,12 @@ void PetWindow::mouseMoveEvent(QMouseEvent* event)
 void PetWindow::mouseDoubleClickEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton && doubleClickRequested) {
+        const bool wasDragging = dragMoved_;
         suppressClickRelease_ = true;
         dragMoved_ = false;
+        if (wasDragging && dragStateChanged) {
+            dragStateChanged(false);
+        }
         dragOffset_ = event->globalPosition().toPoint() - frameGeometry().topLeft();
         doubleClickRequested();
         event->accept();
@@ -378,6 +459,9 @@ void PetWindow::mouseReleaseEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton) {
         if (dragMoved_) {
             dragMoved_ = false;
+            if (dragStateChanged) {
+                dragStateChanged(false);
+            }
             placeAt(pos(), true);
             if (layoutChanged) {
                 layoutChanged();
