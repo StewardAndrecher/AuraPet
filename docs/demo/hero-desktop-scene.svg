@@ -1,0 +1,280 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 540" width="1080" height="540" role="img" aria-label="AuraPet 桌面运行全景演示">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#131620"/>
+      <stop offset="55%" stop-color="#1B2030"/>
+      <stop offset="100%" stop-color="#221E2C"/>
+    </linearGradient>
+    <linearGradient id="ambientGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F5B95A" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#6A93FF" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="goldBar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#E8A33E"/>
+      <stop offset="100%" stop-color="#FCE08B"/>
+    </linearGradient>
+    <linearGradient id="petBody1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F4F6FA"/>
+      <stop offset="100%" stop-color="#DCE3EE"/>
+    </linearGradient>
+    <linearGradient id="petCoat" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3A4759"/>
+      <stop offset="100%" stop-color="#242E3B"/>
+    </linearGradient>
+    <linearGradient id="tetherGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FCE08B" stop-opacity="0.25"/>
+      <stop offset="60%" stop-color="#FCE08B" stop-opacity="0.88"/>
+      <stop offset="100%" stop-color="#FFF7DF" stop-opacity="0.95"/>
+    </linearGradient>
+    <filter id="softShadow" x="-12%" y="-12%" width="124%" height="128%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#06080E" flood-opacity="0.48"/>
+    </filter>
+    <filter id="bubbleShadow" x="-15%" y="-15%" width="130%" height="135%">
+      <feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#070910" flood-opacity="0.38"/>
+    </filter>
+    <style>
+      .font-ui { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif; }
+      .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      @keyframes floatPet {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-5px); }
+      }
+      @keyframes floatPet2 {
+        0%, 100% { transform: translateY(0px) rotate(0deg); }
+        50% { transform: translateY(-4px) rotate(2deg); }
+      }
+      @keyframes wave1 { 0%, 100% { height: 6px; y: 129px; } 50% { height: 16px; y: 124px; } }
+      @keyframes wave2 { 0%, 100% { height: 14px; y: 125px; } 50% { height: 5px; y: 129.5px; } }
+      @keyframes wave3 { 0%, 100% { height: 8px; y: 128px; } 50% { height: 18px; y: 123px; } }
+      @keyframes dashFlow {
+        to { stroke-dashoffset: -28; }
+      }
+      @keyframes pulseStar {
+        0%, 100% { opacity: 0.55; transform: scale(0.92); }
+        50% { opacity: 1; transform: scale(1.08); }
+      }
+      @keyframes cursorBlink {
+        0%, 49% { opacity: 1; }
+        50%, 100% { opacity: 0; }
+      }
+      .pet-anim { animation: floatPet 3.2s ease-in-out infinite; }
+      .pet2-anim { animation: floatPet2 2.7s ease-in-out infinite; transform-origin: 905px 385px; }
+      .w1 { animation: wave1 0.85s ease-in-out infinite; }
+      .w2 { animation: wave2 0.72s ease-in-out infinite; }
+      .w3 { animation: wave3 0.95s ease-in-out infinite; }
+      .tether-path { stroke-dasharray: 7 7; animation: dashFlow 1.1s linear infinite; }
+      .star-pulse { animation: pulseStar 1.8s ease-in-out infinite; transform-origin: 998px 308px; }
+      .caret { animation: cursorBlink 1.05s steps(1) infinite; }
+    </style>
+  </defs>
+
+  <!-- Outer Desktop Canvas -->
+  <rect x="0" y="0" width="1080" height="540" rx="18" fill="url(#bgGrad)"/>
+  <ellipse cx="730" cy="270" rx="340" ry="210" fill="url(#ambientGlow)"/>
+  <rect x="0.75" y="0.75" width="1078.5" height="538.5" rx="17.25" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1.5"/>
+
+  <!-- Top System Menu Bar -->
+  <rect x="1" y="1" width="1078" height="32" rx="16" fill="#0D1017" fill-opacity="0.72"/>
+  <rect x="1" y="17" width="1078" height="16" fill="#0D1017" fill-opacity="0.72"/>
+  <circle cx="22" cy="17" r="4.5" fill="#ECEFF4" fill-opacity="0.85"/>
+  <text x="36" y="21" class="font-ui" font-size="12" font-weight="600" fill="#E5E9F0">Code Studio</text>
+  <text x="126" y="21" class="font-ui" font-size="11.5" fill="#9AA3B2">文件   编辑   视图   窗口</text>
+
+  <!-- Menu Bar Right: Focus Status Pill & Hotkey Hints -->
+  <rect x="546" y="6" width="218" height="22" rx="11" fill="#F0B85B" fill-opacity="0.16" stroke="#F0B85B" stroke-opacity="0.45"/>
+  <circle cx="560" cy="17" r="4" fill="#F5C26B"/>
+  <text x="571" y="21" class="font-ui" font-size="11" font-weight="600" fill="#FCE3B4">AuraPet · 专注中 24:18 · 自动静伴</text>
+
+  <rect x="774" y="6" width="288" height="22" rx="11" fill="#FFFFFF" fill-opacity="0.06"/>
+  <text x="786" y="20.5" class="font-mono" font-size="10.5" fill="#C4CBD8">⌃⌥A 显隐  ·  ⌃⌥F 专注  ·  ⌃⌥D 免打扰</text>
+
+  <!-- LAYER 3: Older Background Browser/Docs Window (Behind Pet!) -->
+  <g filter="url(#softShadow)" opacity="0.78">
+    <rect x="440" y="64" width="465" height="335" rx="12" fill="#1C212E" stroke="#FFFFFF" stroke-opacity="0.11"/>
+    <rect x="440" y="64" width="465" height="30" rx="12" fill="#232938"/>
+    <rect x="440" y="82" width="465" height="12" fill="#232938"/>
+    <circle cx="458" cy="79" r="4.5" fill="#5A6275"/>
+    <circle cx="472" cy="79" r="4.5" fill="#5A6275"/>
+    <circle cx="486" cy="79" r="4.5" fill="#5A6275"/>
+    <text x="504" y="83" class="font-ui" font-size="11" fill="#9BA4B5">参考资料文档.md — 后台旧窗口</text>
+
+    <!-- Layer 3 Callout Badge -->
+    <rect x="658" y="70" width="234" height="19" rx="9.5" fill="#323B4F"/>
+    <text x="670" y="83" class="font-ui" font-size="10.5" fill="#B9C4D9">Layer 3 旧窗口：自动退至桌宠下方</text>
+
+    <rect x="462" y="112" width="180" height="10" rx="5" fill="#2D3548"/>
+    <rect x="462" y="132" width="390" height="8" rx="4" fill="#262D3D"/>
+    <rect x="462" y="148" width="360" height="8" rx="4" fill="#262D3D"/>
+    <rect x="462" y="164" width="310" height="8" rx="4" fill="#262D3D"/>
+    <rect x="462" y="196" width="415" height="110" rx="8" fill="#171B26" stroke="#FFFFFF" stroke-opacity="0.05"/>
+    <rect x="462" y="324" width="240" height="8" rx="4" fill="#262D3D"/>
+  </g>
+
+  <!-- LAYER 2: Primary AuraPet Companion + Cloud Speech Bubble + Activity Meter -->
+  <g class="pet-anim">
+    <!-- Cloud Speech Bubble with Aside Pause & Live Qwen3-TTS Waveform -->
+    <g filter="url(#bubbleShadow)">
+      <rect x="536" y="106" width="376" height="114" rx="16" fill="#FFFCF6" stroke="#E6D7C3" stroke-width="1.2"/>
+      <path d="M 672 220 L 662 235 L 688 220 Z" fill="#FFFCF6" stroke="#E6D7C3" stroke-width="1.2"/>
+      <rect x="660" y="217" width="30" height="4" fill="#FFFCF6"/>
+
+      <!-- Header tag inside bubble: Streaming + Qwen3-TTS -->
+      <rect x="552" y="118" width="174" height="20" rx="10" fill="#F4E8D6"/>
+      <text x="562" y="131.5" class="font-ui" font-size="10.5" font-weight="600" fill="#8C5B1F">Qwen3-TTS 本机流式配音</text>
+
+      <!-- Animated Voice Waveform -->
+      <rect class="w1" x="736" y="124" width="3" height="10" rx="1.5" fill="#D98B2B"/>
+      <rect class="w2" x="742" y="122" width="3" height="14" rx="1.5" fill="#D98B2B"/>
+      <rect class="w3" x="748" y="125" width="3" height="9" rx="1.5" fill="#D98B2B"/>
+      <rect class="w2" x="754" y="123" width="3" height="12" rx="1.5" fill="#D98B2B"/>
+
+      <rect x="768" y="118" width="128" height="20" rx="10" fill="#E9F3EC"/>
+      <text x="777" y="131.5" class="font-ui" font-size="10" font-weight="600" fill="#2B6CB0">旁白静音·停顿 0.4s</text>
+
+      <!-- Action Aside (Muted in TTS, Shown in Bubble) -->
+      <text x="552" y="158" class="font-ui" font-size="12" fill="#8C7B6B">（轻轻合上档案，抬眼看向你）</text>
+      <!-- Spoken Dialogue -->
+      <text x="552" y="181" class="font-ui" font-size="13" font-weight="600" fill="#2B241E">博士，专注快满 25 分钟了，喝口水</text>
+      <text x="552" y="201" class="font-ui" font-size="13" font-weight="600" fill="#2B241E">休息一下吧。<tspan class="caret" fill="#D98B2B">▍</tspan></text>
+    </g>
+
+    <!-- Activity Meter Vertical Bar (petActivityMeter) -->
+    <rect x="598" y="280" width="7" height="102" rx="3.5" fill="#0F131C" fill-opacity="0.65" stroke="#FFFFFF" stroke-opacity="0.18"/>
+    <rect x="599.5" y="296" width="4" height="84" rx="2" fill="url(#goldBar)"/>
+    <text x="562" y="335" class="font-ui" font-size="10.5" font-weight="600" fill="#FCE3B4">活力 86%</text>
+
+    <!-- Stylized Anime Companion Character #1 (Kal'tsit-inspired Lynx Companion) -->
+    <g filter="url(#bubbleShadow)">
+      <!-- Ears -->
+      <polygon points="635,268 624,238 652,254" fill="#3A4759" stroke="#222A35" stroke-width="1.5"/>
+      <polygon points="636,264 630,245 647,255" fill="#D8E2DC"/>
+      <polygon points="695,268 706,238 678,254" fill="#3A4759" stroke="#222A35" stroke-width="1.5"/>
+      <polygon points="694,264 700,245 683,255" fill="#D8E2DC"/>
+      <!-- Lab Coat / Body -->
+      <path d="M 632 325 Q 624 385 628 402 L 702 402 Q 706 385 698 325 Z" fill="url(#petBody1)" stroke="#2C3545" stroke-width="1.5"/>
+      <path d="M 648 328 L 665 362 L 682 328" fill="#52796F"/>
+      <!-- Green Crystal Hairpin / Collar Accent -->
+      <polygon points="665,342 660,352 665,362 670,352" fill="#74C69D"/>
+      <!-- Head & Hair -->
+      <ellipse cx="665" cy="294" rx="38" ry="34" fill="url(#petBody1)" stroke="#2C3545" stroke-width="1.5"/>
+      <path d="M 627 288 Q 635 256 665 256 Q 695 256 703 288 Q 696 274 682 276 Q 665 266 648 276 Q 634 274 627 288 Z" fill="#CFD8DC"/>
+      <!-- Calm Emerald Eyes -->
+      <ellipse cx="651" cy="297" rx="4.2" ry="4.8" fill="#40916C"/>
+      <circle cx="649.5" cy="295.5" r="1.5" fill="#FFFFFF"/>
+      <ellipse cx="679" cy="297" rx="4.2" ry="4.8" fill="#40916C"/>
+      <circle cx="677.5" cy="295.5" r="1.5" fill="#FFFFFF"/>
+      <!-- Subtle Blush & Calm Expression -->
+      <ellipse cx="642" cy="306" rx="5" ry="2.2" fill="#F4A29E" fill-opacity="0.45"/>
+      <ellipse cx="688" cy="306" rx="5" ry="2.2" fill="#F4A29E" fill-opacity="0.45"/>
+      <path d="M 661 309 Q 665 312 669 309" fill="none" stroke="#4A5568" stroke-width="1.5" stroke-linecap="round"/>
+      <!-- Clipboard / Archive -->
+      <rect x="676" y="348" width="26" height="34" rx="4" transform="rotate(-10 676 348)" fill="#374151" stroke="#9CA3AF" stroke-width="1"/>
+    </g>
+
+    <!-- Layer 2 Badge Below Primary Pet -->
+    <rect x="576" y="410" width="184" height="22" rx="11" fill="#E8A33E" fill-opacity="0.2" stroke="#F0B85B" stroke-opacity="0.6"/>
+    <text x="589" y="425" class="font-ui" font-size="10.5" font-weight="600" fill="#FCE3B4">Layer 2 桌宠层 · 绝不被旧窗口掩盖</text>
+
+    <!-- Hover Chat Input Panel (petChatInputPanel) -->
+    <rect x="562" y="439" width="212" height="32" rx="10" fill="#202430" fill-opacity="0.95" stroke="#FFFFFF" stroke-opacity="0.18"/>
+    <text x="575" y="459" class="font-ui" font-size="11.5" fill="#9AA3B2">输入消息… <tspan fill="#6E7787" font-size="10">回车发送 · Esc 收起</tspan></text>
+  </g>
+
+  <!-- SECOND INDEPENDENT PET + Right-Click PetTether ("灵犀牵引") -->
+  <g>
+    <!-- Tether Curved Shimmer Path -->
+    <path class="tether-path" d="M 918 378 Q 958 312 998 308" fill="none" stroke="url(#tetherGrad)" stroke-width="2.4" stroke-linecap="round"/>
+    <!-- Target Star Reticle -->
+    <g class="star-pulse">
+      <circle cx="998" cy="308" r="16" fill="#FCE08B" fill-opacity="0.14" stroke="#FCE08B" stroke-opacity="0.65" stroke-dasharray="5 4" stroke-width="1.3"/>
+      <path d="M 998 297 Q 999.5 306.5 1009 308 Q 999.5 309.5 998 319 Q 996.5 309.5 987 308 Q 996.5 306.5 998 297 Z" fill="#FFF3C4"/>
+    </g>
+    <text x="942" y="284" class="font-ui" font-size="10.5" font-weight="600" fill="#FCE3B4">右键长按「灵犀牵引」</text>
+
+    <!-- Cute Second Companion (Multi-Pet Coexistence) -->
+    <g class="pet2-anim" filter="url(#bubbleShadow)">
+      <ellipse cx="896" cy="392" rx="30" ry="26" fill="#FFE8D6" stroke="#4A3B32" stroke-width="1.5"/>
+      <polygon points="873,375 868,354 887,367" fill="#F4A261" stroke="#4A3B32" stroke-width="1.4"/>
+      <polygon points="919,375 924,354 905,367" fill="#F4A261" stroke="#4A3B32" stroke-width="1.4"/>
+      <circle cx="886" cy="390" r="3.3" fill="#3B2F2F"/>
+      <circle cx="906" cy="390" r="3.3" fill="#3B2F2F"/>
+      <path d="M 892 396 Q 896 400 900 396" fill="none" stroke="#3B2F2F" stroke-width="1.5" stroke-linecap="round"/>
+      <ellipse cx="879" cy="396" rx="4" ry="2" fill="#E76F51" fill-opacity="0.45"/>
+      <ellipse cx="913" cy="396" rx="4" ry="2" fill="#E76F51" fill-opacity="0.45"/>
+    </g>
+    <rect x="838" y="426" width="124" height="20" rx="10" fill="#FFFFFF" fill-opacity="0.09"/>
+    <text x="849" y="440" class="font-ui" font-size="10.5" fill="#DCE3EE">多宠同屏 · 独立记忆</text>
+  </g>
+
+  <!-- LAYER 1: Active Focused Code Editor Window (Left Side, Overlaps Background Cleanly) -->
+  <g filter="url(#softShadow)">
+    <rect x="26" y="54" width="468" height="414" rx="12" fill="#161922" stroke="#6384FF" stroke-opacity="0.45" stroke-width="1.4"/>
+    <rect x="26" y="54" width="468" height="32" rx="12" fill="#1E2330"/>
+    <rect x="26" y="74" width="468" height="12" fill="#1E2330"/>
+    <circle cx="45" cy="70" r="5" fill="#FF5F56"/>
+    <circle cx="61" cy="70" r="5" fill="#FFBD2E"/>
+    <circle cx="77" cy="70" r="5" fill="#27C93F"/>
+    <text x="96" y="74" class="font-mono" font-size="11.5" font-weight="600" fill="#E5E9F0">workspace / main.cpp</text>
+
+    <rect x="304" y="60" width="176" height="20" rx="10" fill="#3B82F6" fill-opacity="0.22" stroke="#60A5FA" stroke-opacity="0.45"/>
+    <text x="315" y="74" class="font-ui" font-size="10.5" font-weight="600" fill="#93C5FD">Layer 1 当前聚焦窗口 · 零遮挡</text>
+
+    <!-- Realistic Code Lines -->
+    <g class="font-mono" font-size="11.5">
+      <text x="46" y="114" fill="#596377">01</text>
+      <text x="74" y="114" fill="#C678DD">#include</text>
+      <text x="138" y="114" fill="#98C379">"desktop_pet_manager.h"</text>
+
+      <text x="46" y="138" fill="#596377">02</text>
+      <text x="74" y="138" fill="#5C6370">// 专注写代码时，桌宠自动进入「静伴」节奏</text>
+
+      <text x="46" y="162" fill="#596377">03</text>
+      <text x="74" y="162" fill="#C678DD">void</text>
+      <text x="110" y="162" fill="#61AFEF">syncCompanionRhythm</text>
+      <text x="246" y="162" fill="#ABB2BF">() {</text>
+
+      <text x="46" y="186" fill="#596377">04</text>
+      <text x="90" y="186" fill="#C678DD">if</text>
+      <text x="112" y="186" fill="#ABB2BF">(focus.active() || frontAppFullScreen) {</text>
+
+      <text x="46" y="210" fill="#596377">05</text>
+      <text x="108" y="210" fill="#E5C07B">pet</text>
+      <text x="130" y="210" fill="#ABB2BF">.setEffectiveRhythm(</text>
+      <text x="266" y="210" fill="#56B6C2">Rhythm::Quiet</text>
+      <text x="358" y="210" fill="#ABB2BF">);</text>
+
+      <text x="46" y="234" fill="#596377">06</text>
+      <text x="90" y="234" fill="#ABB2BF">}</text>
+
+      <text x="46" y="258" fill="#596377">07</text>
+      <text x="74" y="258" fill="#ABB2BF">}</text>
+    </g>
+
+    <!-- Value Highlights Inside Editor Bottom -->
+    <rect x="44" y="286" width="432" height="162" rx="10" fill="#1D2230" stroke="#FFFFFF" stroke-opacity="0.07"/>
+    <text x="60" y="311" class="font-ui" font-size="12" font-weight="700" fill="#F5C26B">为什么需要 AuraPet？（不仅是动图播放器）</text>
+    <text x="60" y="335" class="font-ui" font-size="11.5" fill="#D8DEE9">• 写代码 / 看论文：处于活跃窗口下第二层，不挡光标、不抢焦点</text>
+    <text x="60" y="358" class="font-ui" font-size="11.5" fill="#D8DEE9">• 切窗口 / 滑桌面：旧窗口不掩埋桌宠，切桌面自动按左右方位跟进</text>
+    <text x="60" y="381" class="font-ui" font-size="11.5" fill="#D8DEE9">• 聊心事 / 听语音：括号神态静音自然停顿，本机千问离线流式发声</text>
+    <text x="60" y="404" class="font-ui" font-size="11.5" fill="#D8DEE9">• 零捆绑 / 高隐私：本体纯净无内置素材，API 密钥本机隔离加密</text>
+    <text x="60" y="427" class="font-ui" font-size="11.5" fill="#93C5FD">• 支持平台：macOS 14+ (Apple Silicon)  &amp;  Windows 10 / 11 (x64)</text>
+  </g>
+
+  <!-- Bottom Feature Tag Bar -->
+  <g class="font-ui" font-size="11" font-weight="600">
+    <rect x="26" y="492" width="194" height="30" rx="8" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.1"/>
+    <text x="123" y="511" text-anchor="middle" fill="#E5E9F0">纯净本体 · 按需导入角色包</text>
+
+    <rect x="234" y="492" width="198" height="30" rx="8" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.1"/>
+    <text x="333" y="511" text-anchor="middle" fill="#E5E9F0">四档陪伴 · 自动感知前台状态</text>
+
+    <rect x="446" y="492" width="204" height="30" rx="8" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.1"/>
+    <text x="548" y="511" text-anchor="middle" fill="#E5E9F0">SSE 流式对话 · 结构化长记忆</text>
+
+    <rect x="664" y="492" width="202" height="30" rx="8" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.1"/>
+    <text x="765" y="511" text-anchor="middle" fill="#E5E9F0">Qwen3-TTS 配音 · MLX 微调</text>
+
+    <rect x="880" y="492" width="174" height="30" rx="8" fill="#F0B85B" fill-opacity="0.15" stroke="#F0B85B" stroke-opacity="0.4"/>
+    <text x="967" y="511" text-anchor="middle" fill="#FCE3B4">一键懒人脚本部署</text>
+  </g>
+</svg>

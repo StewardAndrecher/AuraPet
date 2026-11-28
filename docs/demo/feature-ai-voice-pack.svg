@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 460" width="1080" height="460" role="img" aria-label="AuraPet DIY角色工坊、AI流式对话、本机千问配音与安全分享全链路">
+  <defs>
+    <linearGradient id="bgPipe" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#141722"/>
+      <stop offset="100%" stop-color="#1E2130"/>
+    </linearGradient>
+    <linearGradient id="stepAccent1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#60A5FA"/>
+      <stop offset="100%" stop-color="#93C5FD"/>
+    </linearGradient>
+    <linearGradient id="stepAccent2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#F0B85B"/>
+      <stop offset="100%" stop-color="#FDE68A"/>
+    </linearGradient>
+    <linearGradient id="stepAccent3" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="100%" stop-color="#6EE7B7"/>
+    </linearGradient>
+    <linearGradient id="stepAccent4" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#A78BFA"/>
+      <stop offset="100%" stop-color="#C4B5FD"/>
+    </linearGradient>
+    <filter id="cardDrop" x="-10%" y="-8%" width="120%" height="122%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#06080E" flood-opacity="0.42"/>
+    </filter>
+    <style>
+      .ui { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      @keyframes bar1 { 0%, 100% { height: 7px; y: 242px; } 50% { height: 19px; y: 236px; } }
+      @keyframes bar2 { 0%, 100% { height: 17px; y: 237px; } 50% { height: 6px; y: 242.5px; } }
+      @keyframes bar3 { 0%, 100% { height: 11px; y: 240px; } 50% { height: 21px; y: 235px; } }
+      @keyframes arrowFlow { to { stroke-dashoffset: -20; } }
+      .b1 { animation: bar1 0.8s ease-in-out infinite; }
+      .b2 { animation: bar2 0.65s ease-in-out infinite; }
+      .b3 { animation: bar3 0.9s ease-in-out infinite; }
+      .pipe-arrow { stroke-dasharray: 5 5; animation: arrowFlow 1s linear infinite; }
+    </style>
+  </defs>
+
+  <!-- Outer Canvas -->
+  <rect x="0" y="0" width="1080" height="460" rx="18" fill="url(#bgPipe)"/>
+  <rect x="0.75" y="0.75" width="1078.5" height="458.5" rx="17.25" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1.5"/>
+
+  <!-- Header -->
+  <text x="36" y="38" class="ui" font-size="15" font-weight="700" fill="#F4F6FA">从一张图片到会听、会记、会开口的专属角色：DIY 工坊 × AI 灵魂 × 本机语音 × 安全打包</text>
+  <text x="36" y="59" class="ui" font-size="11.5" fill="#9BA4B5">软件本体零捆绑素材，全流程本地持久化（SQLite WAL），支持把做好的角色一键打包成 .gifpet 分享给同好</text>
+
+  <!-- Connectors Between 4 Cards -->
+  <line class="pipe-arrow" x1="264" y1="248" x2="284" y2="248" stroke="#9BA4B5" stroke-width="2"/>
+  <line class="pipe-arrow" x1="528" y1="248" x2="548" y2="248" stroke="#9BA4B5" stroke-width="2"/>
+  <line class="pipe-arrow" x1="792" y1="248" x2="812" y2="248" stroke="#9BA4B5" stroke-width="2"/>
+
+  <!-- ========================================================= -->
+  <!-- CARD 1: Asset Import, Cutout & Motion Studio              -->
+  <!-- ========================================================= -->
+  <g filter="url(#cardDrop)">
+    <rect x="24" y="80" width="240" height="352" rx="14" fill="#1D2231" stroke="#60A5FA" stroke-opacity="0.35"/>
+    <rect x="24" y="80" width="240" height="5" rx="2.5" fill="url(#stepAccent1)"/>
+
+    <rect x="40" y="98" width="66" height="22" rx="6" fill="#60A5FA" fill-opacity="0.18"/>
+    <text x="73" y="113" text-anchor="middle" class="mono" font-size="10.5" font-weight="700" fill="#93C5FD">STEP 01</text>
+    <text x="40" y="142" class="ui" font-size="14" font-weight="700" fill="#F4F6FA">素材导入与动作工坊</text>
+
+    <!-- Format Badges -->
+    <rect x="40" y="156" width="208" height="34" rx="8" fill="#151925" stroke="#FFFFFF" stroke-opacity="0.07"/>
+    <text x="144" y="177" text-anchor="middle" class="mono" font-size="10.5" fill="#BFDBFE">GIF · WebP · PNG · JPG · AVIF</text>
+
+    <!-- Feature List -->
+    <rect x="40" y="202" width="208" height="62" rx="8" fill="#FFFFFF" fill-opacity="0.04"/>
+    <text x="52" y="222" class="ui" font-size="11.5" font-weight="700" fill="#DBEAFE">✂️ Apple Vision 智能抠图</text>
+    <text x="52" y="240" class="ui" font-size="10.5" fill="#9BA4B5">macOS 本机自动去除静态图与</text>
+    <text x="52" y="255" class="ui" font-size="10.5" fill="#9BA4B5">带背景 GIF 底色，实时深浅预览</text>
+
+    <rect x="40" y="274" width="208" height="66" rx="8" fill="#FFFFFF" fill-opacity="0.04"/>
+    <text x="52" y="294" class="ui" font-size="11.5" font-weight="700" fill="#DBEAFE">🎞 静态图秒变活灵活现</text>
+    <text x="52" y="312" class="ui" font-size="10.5" fill="#9BA4B5">内置「呼吸 / 摇摆 / 轻跳」动作</text>
+    <text x="52" y="328" class="ui" font-size="10.5" fill="#9BA4B5">生成模板 + 多张序列帧合成器</text>
+
+    <rect x="40" y="350" width="208" height="64" rx="8" fill="#60A5FA" fill-opacity="0.1" stroke="#60A5FA" stroke-opacity="0.28"/>
+    <text x="52" y="370" class="ui" font-size="11" font-weight="700" fill="#93C5FD">三态动作槽独立绑定</text>
+    <text x="52" y="389" class="ui" font-size="10.5" fill="#CBD5E1">待机  ·  开心互动  ·  困倦休息</text>
+    <text x="52" y="405" class="ui" font-size="10" fill="#94A3B8">按陪伴节奏与番茄钟自动切换</text>
+  </g>
+
+  <!-- ========================================================= -->
+  <!-- CARD 2: Streaming AI, Aside Pause & Structured Memory     -->
+  <!-- ========================================================= -->
+  <g filter="url(#cardDrop)">
+    <rect x="288" y="80" width="240" height="352" rx="14" fill="#1D2231" stroke="#F0B85B" stroke-opacity="0.4"/>
+    <rect x="288" y="80" width="240" height="5" rx="2.5" fill="url(#stepAccent2)"/>
+
+    <rect x="304" y="98" width="66" height="22" rx="6" fill="#F0B85B" fill-opacity="0.2"/>
+    <text x="337" y="113" text-anchor="middle" class="mono" font-size="10.5" font-weight="700" fill="#FDE68A">STEP 02</text>
+    <text x="304" y="142" class="ui" font-size="14" font-weight="700" fill="#F4F6FA">AI 角色卡与长期记忆</text>
+
+    <!-- OpenAI Compatible Badge -->
+    <rect x="304" y="156" width="208" height="34" rx="8" fill="#151925" stroke="#FFFFFF" stroke-opacity="0.07"/>
+    <text x="408" y="177" text-anchor="middle" class="ui" font-size="10.5" fill="#FDE68A">兼容 OpenAI / DeepSeek / Ollama</text>
+
+    <!-- Aside Pause Demo Box -->
+    <rect x="304" y="202" width="208" height="78" rx="8" fill="#FFFCF6"/>
+    <text x="314" y="221" class="ui" font-size="10" font-weight="700" fill="#8B5E2B">（合上病历夹） ← 静音 + 自然停顿</text>
+    <text x="314" y="240" class="ui" font-size="11" font-weight="600" fill="#1F2430">“记得起来活动一下肩颈。”</text>
+    <text x="314" y="264" class="ui" font-size="9.5" fill="#687082">气泡完整保留神态描写，语音只读台词</text>
+
+    <!-- Long-term Memory -->
+    <rect x="304" y="290" width="208" height="68" rx="8" fill="#FFFFFF" fill-opacity="0.04"/>
+    <text x="316" y="310" class="ui" font-size="11.5" font-weight="700" fill="#FEF3C7">🧠 结构化长期记忆库</text>
+    <text x="316" y="328" class="ui" font-size="10.5" fill="#9BA4B5">自动归纳早期对话摘要与偏好</text>
+    <text x="316" y="344" class="ui" font-size="10.5" fill="#9BA4B5">随时查看来源、手动修订或遗忘</text>
+
+    <rect x="304" y="368" width="208" height="46" rx="8" fill="#F0B85B" fill-opacity="0.12" stroke="#F0B85B" stroke-opacity="0.3"/>
+    <text x="316" y="387" class="ui" font-size="10.5" font-weight="700" fill="#FDE68A">支持离线回退台词库</text>
+    <text x="316" y="404" class="ui" font-size="10" fill="#CBD5E1">未配 API 也能双击互动说专属台词</text>
+  </g>
+
+  <!-- ========================================================= -->
+  <!-- CARD 3: 3-Mode Voice Playback & Local Qwen3-TTS + MLX     -->
+  <!-- ========================================================= -->
+  <g filter="url(#cardDrop)">
+    <rect x="552" y="80" width="240" height="352" rx="14" fill="#1D2231" stroke="#34D399" stroke-opacity="0.4"/>
+    <rect x="552" y="80" width="240" height="5" rx="2.5" fill="url(#stepAccent3)"/>
+
+    <rect x="568" y="98" width="66" height="22" rx="6" fill="#34D399" fill-opacity="0.18"/>
+    <text x="601" y="113" text-anchor="middle" class="mono" font-size="10.5" font-weight="700" fill="#6EE7B7">STEP 03</text>
+    <text x="568" y="142" class="ui" font-size="14" font-weight="700" fill="#F4F6FA">三模语音与千问微调</text>
+
+    <!-- 3 Tier Pills -->
+    <rect x="568" y="156" width="208" height="34" rx="8" fill="#151925" stroke="#FFFFFF" stroke-opacity="0.07"/>
+    <text x="672" y="177" text-anchor="middle" class="ui" font-size="10.5" fill="#A7F3D0">系统语音 · 本机千问 · 原声 WAV</text>
+
+    <!-- Animated Streaming Waveform Box -->
+    <rect x="568" y="202" width="208" height="66" rx="8" fill="#10B981" fill-opacity="0.1" stroke="#34D399" stroke-opacity="0.35"/>
+    <text x="580" y="222" class="ui" font-size="11" font-weight="700" fill="#A7F3D0">Qwen3-TTS 0.6B 本机流式合成</text>
+    <rect class="b1" x="582" y="240" width="4" height="10" rx="2" fill="#34D399"/>
+    <rect class="b2" x="590" y="237" width="4" height="16" rx="2" fill="#34D399"/>
+    <rect class="b3" x="598" y="239" width="4" height="12" rx="2" fill="#34D399"/>
+    <rect class="b1" x="606" y="240" width="4" height="10" rx="2" fill="#34D399"/>
+    <rect class="b2" x="614" y="237" width="4" height="16" rx="2" fill="#34D399"/>
+    <text x="628" y="250" class="mono" font-size="10" fill="#D1FAE5">127.0.0.1:17860 · 离线</text>
+
+    <!-- Voice Corpus & MLX Fine-tuning -->
+    <rect x="568" y="278" width="208" height="72" rx="8" fill="#FFFFFF" fill-opacity="0.04"/>
+    <text x="580" y="298" class="ui" font-size="11.5" font-weight="700" fill="#D1FAE5">🎙 Apple Silicon 音色训练</text>
+    <text x="580" y="316" class="ui" font-size="10.5" fill="#9BA4B5">在角色卡导入中/日参考 WAV 与</text>
+    <text x="580" y="332" class="ui" font-size="10.5" fill="#9BA4B5">台词，调用本机 MLX 一键微调</text>
+
+    <rect x="568" y="360" width="208" height="54" rx="8" fill="#FFFFFF" fill-opacity="0.04"/>
+    <text x="580" y="380" class="ui" font-size="11" font-weight="700" fill="#E5E9F0">内置服务健康面板</text>
+    <text x="580" y="398" class="ui" font-size="10" fill="#9BA4B5">右键菜单随时启停千问后台服务</text>
+  </g>
+
+  <!-- ========================================================= -->
+  <!-- CARD 4: Security Isolation & .gifpet Whitelist Sharing    -->
+  <!-- ========================================================= -->
+  <g filter="url(#cardDrop)">
+    <rect x="816" y="80" width="240" height="352" rx="14" fill="#1D2231" stroke="#A78BFA" stroke-opacity="0.4"/>
+    <rect x="816" y="80" width="240" height="5" rx="2.5" fill="url(#stepAccent4)"/>
+
+    <rect x="832" y="98" width="66" height="22" rx="6" fill="#A78BFA" fill-opacity="0.2"/>
+    <text x="865" y="113" text-anchor="middle" class="mono" font-size="10.5" font-weight="700" fill="#DDD6FE">STEP 04</text>
+    <text x="832" y="142" class="ui" font-size="14" font-weight="700" fill="#F4F6FA">隐私隔离与安全分享</text>
+
+    <!-- Package Badge -->
+    <rect x="832" y="156" width="208" height="34" rx="8" fill="#151925" stroke="#FFFFFF" stroke-opacity="0.07"/>
+    <text x="936" y="177" text-anchor="middle" class="mono" font-size="10.5" fill="#DDD6FE">RolePack.gifpet 双击即装</text>
+
+    <!-- Whitelist Box -->
+    <rect x="832" y="202" width="208" height="106" rx="8" fill="#FFFFFF" fill-opacity="0.04"/>
+    <text x="844" y="222" class="ui" font-size="11.5" font-weight="700" fill="#EDE9FE">📦 严格白名单导出机制</text>
+    <text x="844" y="242" class="ui" font-size="10.5" fill="#A7F3D0">✓ 角色动图与三态动作槽</text>
+    <text x="844" y="259" class="ui" font-size="10.5" fill="#A7F3D0">✓ 角色卡人设与参考音色语料</text>
+    <text x="844" y="278" class="ui" font-size="10.5" fill="#FCA5A5">✗ 绝不含 API Key 与接口地址</text>
+    <text x="844" y="295" class="ui" font-size="10.5" fill="#FCA5A5">✗ 绝不含私人聊天记录与记忆</text>
+
+    <!-- Local Credential Isolation -->
+    <rect x="832" y="318" width="208" height="96" rx="8" fill="#A78BFA" fill-opacity="0.11" stroke="#A78BFA" stroke-opacity="0.32"/>
+    <text x="844" y="338" class="ui" font-size="11" font-weight="700" fill="#DDD6FE">🔒 本机密钥分端点加密</text>
+    <text x="844" y="357" class="ui" font-size="10" fill="#CBD5E1">• macOS：0700/0600 私有权限隔离</text>
+    <text x="844" y="375" class="ui" font-size="10" fill="#CBD5E1">• Windows：系统账户 DPAPI 加密</text>
+    <text x="844" y="393" class="ui" font-size="10" fill="#94A3B8">按接口 SHA-256 隔离，防跨服串钥</text>
+  </g>
+</svg>
